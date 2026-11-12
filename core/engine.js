@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource } from 'firebase/ai';
-import { initializeAppCheck, ReCaptchaV3Provider, CustomProvider } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, CustomProvider } from 'firebase/app-check';
 import { getRemoteConfig, fetchAndActivate, getValue } from 'firebase/remote-config';
 
 import { REMOTE_DEFAULTS, FALLBACK_REPLIES } from './config.js';
@@ -19,7 +19,7 @@ const LANG = [{ type: 'text', languages: ['en'] }];
 export async function initFirebase({ firebaseConfig, appCheck }) {
   const app = initializeApp(firebaseConfig);
   if (appCheck?.kind === 'recaptcha' && appCheck.siteKey) {
-    initializeAppCheck(app, { provider: new ReCaptchaV3Provider(appCheck.siteKey), isTokenAutoRefreshEnabled: true });
+    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheck.siteKey), isTokenAutoRefreshEnabled: true });
   } else if (appCheck?.kind === 'debug' && appCheck.token) {
     globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN = appCheck.token;
     initializeAppCheck(app, {

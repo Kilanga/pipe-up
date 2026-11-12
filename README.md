@@ -37,7 +37,7 @@ result.response.inferenceSource; // "on_device" | "in_cloud" → drives the badg
 - **Hybrid inference:** Gemini Nano on the device first (private and fast); cloud Gemini only when the device cannot run Nano *and* the user allowed it. The badge shows where each suggestion was really generated, from `inferenceSource`.
 - **What goes to the cloud:** only the last two caption lines. The personal history is never sent; briefing excerpts only with a second, separate opt-in.
 - **Structured output** on both paths with the same JSON schema.
-- **App Check:** reCAPTCHA v3 on the hosted demo; a locally entered debug token in the extension (MV3 cannot load the reCAPTCHA script). On-device suggestions need no network at all.
+- **App Check:** reCAPTCHA Enterprise (Fraud Defense) on the hosted demo; a locally entered debug token in the extension (MV3 cannot load the reCAPTCHA script). On-device suggestions need no network at all.
 - **Remote Config:** prompt version, pause length, max words, number of examples, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
 
 ## Architecture
@@ -72,7 +72,7 @@ test/        unit tests (node --test)
 ## Build it yourself
 
 1. Create a Firebase project, add a Web app, enable **Firebase AI Logic** (Gemini Developer API).
-2. App Check: register a reCAPTCHA v3 site key for your hosting domain; for the extension, create a debug token and paste it in *Settings → Cloud access*.
+2. App Check: register a reCAPTCHA Enterprise (Fraud Defense) site key for your hosting domain; for the extension, create a debug token and paste it in *Settings → Cloud access*.
 3. Copy `config/firebase.example.json` to `config/firebase.local.json` and fill it in (this file is git-ignored).
 4. `npm install && npm test && npm run build` → `dist/extension`, `dist/demo`, `dist/pipe-up-extension.zip`.
 5. `firebase deploy --only hosting,remoteconfig`.

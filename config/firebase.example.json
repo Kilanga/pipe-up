@@ -7,5 +7,5 @@
     "messagingSenderId": "000000000000",
     "appId": "1:000000000000:web:0000000000000000000000"
   },
-  "recaptchaSiteKey": "YOUR_RECAPTCHA_V3_SITE_KEY"
+  "recaptchaSiteKey": "YOUR_RECAPTCHA_ENTERPRISE_SITE_KEY"
 }
