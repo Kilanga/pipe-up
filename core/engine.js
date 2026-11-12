@@ -102,6 +102,20 @@ export class SuggestionEngine {
     await this.deviceModel.initializeDeviceModel(onProgress);
   }
 
+  /**
+   * Loads Gemini Nano into memory before the first real question, so the
+   * first suggestion takes seconds instead of ~20 s. Never uses the cloud.
+   */
+  async warmUp() {
+    if ((await deviceStatus()) !== 'available' || this.warmed) return;
+    this.warmed = true;
+    try {
+      await this.deviceModel.generateContent(buildPrompt({ lines: [{ speaker: 'Other person', text: 'Hello, can you hear me?' }] }));
+    } catch {
+      this.warmed = false;
+    }
+  }
+
   cloudAllowed() {
     return Boolean(this.getSettings().cloudConsent && this.remote.cloud_enabled);
   }

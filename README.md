@@ -64,7 +64,7 @@ test/        unit tests (node --test)
 
 ## Try it
 
-- **Hosted demo:** a simulated call, no Meet meeting needed — URL in the Devpost submission. Click *Load Sam's sample briefing*, then *Start the call*.
+- **Hosted demo:** https://pipe-up-demo.web.app — a simulated call, no Meet meeting needed. Click *Load Sam's sample briefing*, then *Start the call*.
 - **Extension:** download `pipe-up-extension.zip` from the latest release, unzip, open `chrome://extensions`, enable Developer mode, *Load unpacked*. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*.
 
 **On-device requirements:** Chrome desktop 139+, about 22 GB free disk space, a GPU with more than 4 GB of VRAM. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and restart Chrome.

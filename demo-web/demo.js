@@ -190,4 +190,5 @@ initFirebase({
     getBriefing: () => briefingIndex,
     getSettings: () => settings,
   });
+  engine.warmUp();
 });

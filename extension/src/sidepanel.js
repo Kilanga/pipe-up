@@ -56,6 +56,7 @@ async function startEngine() {
     getBriefing: () => briefingIndex,
     getSettings: () => settings,
   });
+  engine.warmUp();
 }
 
 settingsStore.get().then(async (s) => {
