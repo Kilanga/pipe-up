@@ -1,0 +1,11 @@
+{
+  "parameters": {
+    "prompt_version": { "defaultValue": { "value": "1" }, "description": "Prompt template version", "valueType": "STRING" },
+    "pause_ms": { "defaultValue": { "value": "1200" }, "description": "Silence in the captions (ms) before suggesting", "valueType": "NUMBER" },
+    "max_words": { "defaultValue": { "value": "12" }, "description": "Maximum words per suggestion", "valueType": "NUMBER" },
+    "examples_k": { "defaultValue": { "value": "3" }, "description": "Past replies used as style examples", "valueType": "NUMBER" },
+    "briefing_chunks": { "defaultValue": { "value": "2" }, "description": "Briefing excerpts added to the prompt", "valueType": "NUMBER" },
+    "cloud_model": { "defaultValue": { "value": "gemini-2.5-flash-lite" }, "description": "Cloud fallback model", "valueType": "STRING" },
+    "cloud_enabled": { "defaultValue": { "value": "true" }, "description": "Kill switch for the cloud fallback", "valueType": "BOOLEAN" }
+  }
+}

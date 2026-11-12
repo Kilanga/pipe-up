@@ -1,0 +1,11 @@
+{
+  "firebaseConfig": {
+    "apiKey": "YOUR_WEB_API_KEY",
+    "authDomain": "your-project.firebaseapp.com",
+    "projectId": "your-project",
+    "storageBucket": "your-project.firebasestorage.app",
+    "messagingSenderId": "000000000000",
+    "appId": "1:000000000000:web:0000000000000000000000"
+  },
+  "recaptchaSiteKey": "YOUR_RECAPTCHA_V3_SITE_KEY"
+}

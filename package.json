@@ -1,0 +1,22 @@
+{
+  "name": "pipe-up",
+  "version": "0.1.0",
+  "description": "Reply suggestions for people with speech differences in video calls — on-device first with Firebase AI Logic hybrid inference",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.js",
+    "deploy": "npm run build && firebase deploy --only hosting,remoteconfig"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "firebase": "^13.3.0",
+    "pdfjs-dist": "^6.5.438"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "type": "module",
+  "private": "true"
+}

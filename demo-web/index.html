@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pipe Up — live demo</title>
+    <meta name="description" content="Try Pipe Up on a simulated video call: reply suggestions from live captions, on-device AI first, with Firebase AI Logic hybrid inference." />
+    <link rel="icon" href="icon.svg" />
+    <link rel="stylesheet" href="panel.css" />
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>Pipe Up <span class="muted">demo call</span></h1>
+        <p class="muted">A simulated video call with live captions. Pipe Up suggests replies for Sam, who stutters. Use keys 1, 2, 3, Enter, Esc and 4.</p>
+      </div>
+      <a class="muted" href="https://github.com/Kilanga/pipe-up" target="_blank" rel="noopener">Source code</a>
+    </header>
+    <div class="layout">
+      <section class="call" aria-label="Simulated call">
+        <div class="tiles">
+          <div class="tile"><span class="avatar a1">M</span><span>Maya · Product lead</span></div>
+          <div class="tile"><span class="avatar a2">J</span><span>Jordan · Engineering</span></div>
+          <div class="tile you"><span class="avatar a3">S</span><span>Sam (you)</span></div>
+        </div>
+        <div class="captions" role="region" aria-label="Captions" aria-live="off" id="captions"></div>
+        <div class="callbar">
+          <button class="primary" id="next">Start the call</button>
+          <button id="auto" aria-pressed="false">Auto-play</button>
+          <form id="say" class="say">
+            <input type="text" id="sayText" placeholder="Or type what someone says…" aria-label="Line spoken by another participant" />
+            <button type="submit">Say</button>
+          </form>
+          <button id="sample">Load Sam's sample briefing</button>
+        </div>
+        <section class="chat" aria-label="Call chat">
+          <h2>Call chat</h2>
+          <ol id="chat"></ol>
+        </section>
+      </section>
+      <aside class="side" id="app" aria-label="Pipe Up settings"></aside>
+    </div>
+    <script type="module" src="demo.js"></script>
+  </body>
+</html>

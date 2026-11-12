@@ -1,0 +1,10 @@
+{
+  "hosting": {
+    "public": "dist/demo",
+    "ignore": ["firebase.json", "**/.*"],
+    "headers": [
+      { "source": "**/*.@(js|mjs)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }] }
+    ]
+  },
+  "remoteconfig": { "template": "remoteconfig.template.json" }
+}

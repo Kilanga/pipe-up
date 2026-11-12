@@ -1,0 +1,7 @@
+node_modules/
+dist/
+config/firebase.local.json
+config/*.local.*
+.firebase/
+*.log
+.DS_Store
