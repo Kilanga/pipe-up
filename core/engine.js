@@ -125,7 +125,7 @@ export class SuggestionEngine {
       avoid: ignoredSuggestions(events, utterance),
       maxWords,
     };
-    const done = (replies, route, error) => ({ replies, route, ms: Math.round(performance.now() - t0), error, hasBriefing });
+    const done = (replies, route, error, usedBriefing = hasBriefing) => ({ replies, route, ms: Math.round(performance.now() - t0), error, hasBriefing: usedBriefing });
 
     const status = this.forceCloud ? 'unavailable' : await deviceStatus();
     if (status === 'available') {
@@ -135,12 +135,12 @@ export class SuggestionEngine {
           const replies = parseReplies(result.response.text(), { maxWords, hasBriefing });
           if (replies) return done(replies, sourceOf(result));
         } catch (e) {
-          if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e));
+          if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e), false);
           break;
         }
       }
     }
-    if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'blocked', `on-device model: ${status}`);
+    if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'blocked', `on-device model: ${status}`, false);
 
     // Cloud path: personal history is never sent; briefing only if the
     // user turned on the separate option.
@@ -158,9 +158,10 @@ export class SuggestionEngine {
         maxWords,
         hasBriefing: hasBriefing && settings.shareBriefingWithCloud,
       });
-      return done(replies || FALLBACK_REPLIES, replies ? sourceOf(result) : 'fallback');
+      const shared = hasBriefing && Boolean(settings.shareBriefingWithCloud);
+      return done(replies || FALLBACK_REPLIES, replies ? sourceOf(result) : 'fallback', undefined, shared);
     } catch (e) {
-      return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e));
+      return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e), false);
     }
   }
 }

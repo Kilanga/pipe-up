@@ -7,7 +7,7 @@ export const REMOTE_DEFAULTS = {
   max_words: 12,
   examples_k: 3,
   briefing_chunks: 2,
-  cloud_model: 'gemini-2.5-flash-lite',
+  cloud_model: 'gemini-3.5-flash-lite',
   cloud_enabled: true,
 };
 
