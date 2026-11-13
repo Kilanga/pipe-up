@@ -1,0 +1,29 @@
+name: Attach extension build to release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build
+        env:
+          # Firebase web settings (public identifiers, protected by App Check)
+          PIPE_UP_FIREBASE_CONFIG: ${{ vars.PIPE_UP_FIREBASE_CONFIG }}
+        run: npm run build
+      - name: Upload pipe-up-extension.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/pipe-up-extension.zip --clobber

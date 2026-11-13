@@ -7,10 +7,13 @@ import { execSync } from 'node:child_process';
 const root = new URL('..', import.meta.url).pathname;
 const p = (s) => root + s;
 const configPath = p('config/firebase.local.json');
-const config = existsSync(configPath)
-  ? JSON.parse(readFileSync(configPath, 'utf8'))
-  : JSON.parse(readFileSync(p('config/firebase.example.json'), 'utf8'));
-if (!existsSync(configPath)) console.warn('! config/firebase.local.json missing: building with placeholder Firebase settings');
+// Order: env var (CI), local file, placeholder example.
+const config = process.env.PIPE_UP_FIREBASE_CONFIG
+  ? JSON.parse(process.env.PIPE_UP_FIREBASE_CONFIG)
+  : existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, 'utf8'))
+    : JSON.parse(readFileSync(p('config/firebase.example.json'), 'utf8'));
+if (!process.env.PIPE_UP_FIREBASE_CONFIG && !existsSync(configPath)) console.warn('! No Firebase settings: building with placeholders');
 
 const define = {
   __FIREBASE_CONFIG__: JSON.stringify(config.firebaseConfig),
