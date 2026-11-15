@@ -29,13 +29,22 @@ const ext = p('dist/extension/');
 mkdirSync(ext, { recursive: true });
 await build({ ...common, entryPoints: [p('extension/src/content.js')], outfile: ext + 'content.js', format: 'iife' });
 await build({ ...common, entryPoints: [p('extension/src/background.js')], outfile: ext + 'background.js', format: 'esm' });
-await build({ ...common, entryPoints: [p('extension/src/sidepanel.js')], outfile: ext + 'sidepanel.js', format: 'esm' });
+// fs/path: Node-only branches of the Emscripten phonemizer, never run in Chrome.
+await build({ ...common, entryPoints: [p('extension/src/sidepanel.js')], outfile: ext + 'sidepanel.js', format: 'esm', external: ['fs', 'path'] });
+await build({ ...common, entryPoints: [p('extension/src/voice-main.js')], outfile: ext + 'voice-main.js', format: 'iife' });
+// Optional local voice module (Piper + ONNX Runtime + phonemizer), with licenses.
+const voice = ext + 'voice/';
+mkdirSync(voice, { recursive: true });
+for (const f of ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) cpSync(p('node_modules/onnxruntime-web/dist/' + f), voice + f);
+for (const f of ['piper_phonemize.wasm', 'piper_phonemize.data']) cpSync(p('node_modules/@diffusionstudio/piper-wasm/build/' + f), voice + f);
+cpSync(p('third_party'), voice + 'licenses', { recursive: true });
 cpSync(p('extension/manifest.json'), ext + 'manifest.json');
 cpSync(p('extension/icons'), ext + 'icons', { recursive: true });
 cpSync(p('extension/src/sidepanel.html'), ext + 'sidepanel.html');
 cpSync(p('shared/panel.css'), ext + 'panel.css');
 cpSync(worker, ext + 'pdf.worker.min.mjs');
 cpSync(p('LICENSE'), ext + 'LICENSE');
+cpSync(p('THIRD_PARTY_NOTICES.md'), ext + 'THIRD_PARTY_NOTICES.md');
 
 // Hosted demo
 const demo = p('dist/demo/');

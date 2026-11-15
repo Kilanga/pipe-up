@@ -6,6 +6,7 @@ import { rank, similarity } from './text.js';
 
 export const ACTIONS = {
   PICKED: 'picked', // chose suggestion 1, 2 or 3
+  EDITED: 'edited', // chose a suggestion, then changed it before sending
   TYPED: 'typed', // wrote their own reply
   SPOKE: 'spoke', // key 4: answered by voice themselves
   FILLER: 'filler', // used a filler phrase ("One moment, please")
@@ -58,12 +59,14 @@ export class IdbMemoryStore extends MemoryStore {
     this.ready = this.#load();
   }
   #open() {
-    return new Promise((resolve, reject) => {
+    // One connection for the life of the page, instead of one per transaction.
+    this.db ??= new Promise((resolve, reject) => {
       const req = indexedDB.open(this.dbName, 1);
       req.onupgradeneeded = () => req.result.createObjectStore('events', { keyPath: 'id' });
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
+    return this.db;
   }
   async #tx(mode, fn) {
     const db = await this.#open();
@@ -104,7 +107,7 @@ export class IdbMemoryStore extends MemoryStore {
   }
 }
 
-const ANSWERS = new Set([ACTIONS.PICKED, ACTIONS.TYPED, ACTIONS.SPOKE]);
+const ANSWERS = new Set([ACTIONS.PICKED, ACTIONS.EDITED, ACTIONS.TYPED, ACTIONS.SPOKE]);
 
 /** The k past replies whose context is closest to what was just said. */
 export function similarExamples(events, utterance, k = 3, minScore = 0.1) {

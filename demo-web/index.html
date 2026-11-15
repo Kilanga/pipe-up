@@ -13,16 +13,20 @@
     <header class="top">
       <div>
         <h1>Pipe Up <span class="muted">demo call</span></h1>
-        <p class="muted">A simulated video call with live captions. Pipe Up suggests replies for Sam, who stutters. Use keys 1, 2, 3, Enter, Esc and 4.</p>
+        <p class="muted">A simulated video call with live captions. Sam stutters and usually speaks for himself; when a block hits at the wrong moment, Pipe Up offers a backup: three short replies to post in the chat, all generated on this computer. Keys: 1, 2, 3 to pick, Enter to send, Tab to edit, 4 when you answered yourself, Alt+1 for "I'm still speaking".</p>
       </div>
       <a class="muted" href="https://github.com/Kilanga/pipe-up" target="_blank" rel="noopener">Source code</a>
     </header>
+    <div class="banner" id="nano-banner" hidden role="region" aria-label="On-device AI not available">
+      <p><b>This browser can't run Gemini Nano on this computer.</b> Pipe Up normally works fully on-device. To try it here, allow the cloud: only the last two caption lines are sent to the Gemini API through Firebase.</p>
+      <button class="primary" id="try-cloud">Try with the cloud</button>
+    </div>
     <div class="layout">
       <section class="call" aria-label="Simulated call">
         <div class="tiles">
-          <div class="tile"><span class="avatar a1">M</span><span>Maya · Product lead</span></div>
-          <div class="tile"><span class="avatar a2">J</span><span>Jordan · Engineering</span></div>
-          <div class="tile you"><span class="avatar a3">S</span><span>Sam (you)</span></div>
+          <div class="tile" data-name="Maya"><span class="avatar a1">M</span><span>Maya · Product lead</span></div>
+          <div class="tile" data-name="Jordan"><span class="avatar a2">J</span><span>Jordan · Engineering</span></div>
+          <div class="tile you" data-name="Sam"><span class="avatar a3">S</span><span>Sam (you)</span></div>
         </div>
         <div class="captions" role="region" aria-label="Captions" aria-live="off" id="captions"></div>
         <div class="callbar">

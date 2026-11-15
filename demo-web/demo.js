@@ -1,8 +1,9 @@
 // Hosted demo: the same engine and interface as the extension, on a
 // simulated call, so anyone can try Pipe Up without a Meet meeting.
-import { initFirebase, SuggestionEngine } from '../core/engine.js';
+import { ReCaptchaEnterpriseProvider } from 'firebase/app-check';
+import { initFirebase, SuggestionEngine, deviceStatus } from '../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../core/memory.js';
-import { DEFAULT_SETTINGS } from '../core/config.js';
+import { DEFAULT_SETTINGS, migrateSettings } from '../core/config.js';
 import { createOverlay } from '../shared/overlay.js';
 import { mountControls } from '../shared/controls.js';
 import { setPdfWorker } from '../shared/extract.js';
@@ -44,7 +45,7 @@ const local = {
     }
   },
 };
-let settings = { ...DEFAULT_SETTINGS, ...local.read('pu-settings', {}) };
+let settings = migrateSettings(local.read('pu-settings', {}));
 const listeners = [];
 const settingsStore = {
   async get() {
@@ -70,7 +71,6 @@ const briefingStore = {
 const memory = new IdbMemoryStore('pipe-up-demo');
 let briefingIndex = null;
 let engine = null;
-let context = '';
 
 const controls = mountControls(document.getElementById('app'), {
   getEngine: () => engine,
@@ -78,37 +78,43 @@ const controls = mountControls(document.getElementById('app'), {
   settings: settingsStore,
   briefing: briefingStore,
   onBriefing: (idx) => (briefingIndex = idx),
-  demoSwitch: true,
+  demo: true,
 });
 
-const overlay = createOverlay({
-  onSend: ({ text, action, choice, shown }) => {
-    deliver(text);
-    learn({ action, reply: text, choice, shown });
+const overlay = createOverlay(
+  {
+    onSend: ({ text, action, choice, shown, context }) => {
+      deliver(text);
+      learn({ action, reply: text, choice, shown, context });
+    },
+    onSpoke: ({ shown, context }) => {
+      addChat('Sam', '(answered out loud)');
+      learn({ action: 'spoke', reply: '', shown, context });
+    },
+    onDismiss: ({ shown, context }) => learn({ action: 'dismissed', reply: '', shown, context }),
+    onSettings: (patch) => settingsStore.set(patch),
+    onRequest: () => (history.length ? ask(history.slice(-3)) : overlay.notice('Start the call first.')),
   },
-  onSpoke: (shown) => {
-    addChat('Sam (spoke)', '(answered out loud)');
-    learn({ action: 'spoke', reply: '', shown });
-  },
-  onDismiss: (shown) => learn({ action: 'dismissed', reply: '', shown }),
-  onSettings: (patch) => settingsStore.set(patch),
-}, { position: { right: '380px', bottom: '24px' } });
+  { position: { right: '380px', bottom: '24px' } }
+);
 overlay.setSettings(settings);
+overlay.setVoiceAvailable('speechSynthesis' in window);
 listeners.push((s) => {
   overlay.setSettings(s);
   controls.applySettings(s);
+  updateBanner();
 });
 
 function learn(e) {
   if (settings.dontLearn) return;
-  memory.add(makeEvent({ context, ...e })).then(() => controls.renderMemory());
+  memory.add(makeEvent(e)).then(() => controls.renderMemory());
 }
 
 function deliver(text) {
   const mode = settings.outputMode;
   if (mode !== 'voice') addChat('Sam', text);
   if (mode !== 'chat' && 'speechSynthesis' in window) {
-    // In the demo the voice plays on your speakers. In a real call the
+    // In the demo the voice plays on your speakers. In a Meet call the
     // extension mixes a local voice into the microphone stream.
     speechSynthesis.cancel();
     speechSynthesis.speak(Object.assign(new SpeechSynthesisUtterance(text), { lang: 'en-US', rate: 1 }));
@@ -117,19 +123,31 @@ function deliver(text) {
 
 function addChat(who, text) {
   const li = document.createElement('li');
-  li.innerHTML = '<b></b> ';
-  li.firstChild.textContent = who + ':';
-  li.append(text);
+  const b = document.createElement('b');
+  b.textContent = who + ': ';
+  li.append(b, text);
   document.getElementById('chat').append(li);
 }
 
-// ---- simulated captions ----
+// ---- banner for computers without Gemini Nano (judges, phones, other browsers) ----
+const banner = document.getElementById('nano-banner');
+async function updateBanner() {
+  const s = await deviceStatus();
+  banner.hidden = s === 'available' || settings.cloudConsent;
+}
+document.getElementById('try-cloud').addEventListener('click', () => settingsStore.set({ cloudConsent: true }));
+updateBanner();
+
+// ---- simulated captions and one request at a time ----
 const captions = document.getElementById('captions');
 const history = [];
 let step = 0;
 let timer = null;
+let requestId = 0;
+let busy = false;
+let pending = null;
 
-async function say(speaker, text) {
+function say(speaker, text) {
   history.push({ speaker, text });
   captions.replaceChildren(
     ...history.slice(-2).map((l) => {
@@ -141,18 +159,39 @@ async function say(speaker, text) {
       return p;
     })
   );
-  document.querySelectorAll('.tile').forEach((t) => t.classList.toggle('speaking', t.textContent.startsWith(speaker)));
+  document.querySelectorAll('.tile').forEach((t) => t.classList.toggle('speaking', t.dataset.name === speaker));
   overlay.setLine(speaker, text);
-  context = text;
-  overlay.setThinking();
-  // Simulate Meet's pause detection.
-  await new Promise((r) => setTimeout(r, Number(engine?.remote.pause_ms) || 1200));
-  if (!engine) return overlay.notice('The AI engine is still starting…');
-  const res = await engine.suggest(history.slice(-3));
-  overlay.setSuggestions(res.replies, res.route);
-  controls.reportRun(res);
-  if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Allow the cloud in the panel on the right to continue.');
-  if (res.error) console.warn('[Pipe Up]', res.error);
+  if (settings.suggestMode === 'onDemand') return overlay.notice('Press Alt+S (or the button) when you want suggestions.');
+  // Simulates Meet's pause detection.
+  setTimeout(() => ask(history.slice(-3)), Number(engine?.remote.pause_ms) || 1200);
+}
+
+function ask(lines) {
+  const id = ++requestId;
+  overlay.setThinking(lines.at(-1)?.text);
+  pending = { id, lines };
+  if (!busy) drain();
+}
+
+async function drain() {
+  busy = true;
+  try {
+    while (pending) {
+      const job = pending;
+      pending = null;
+      if (!engine) await engineReady;
+      const res = await engine.suggest(job.lines, {
+        onPartial: (r) => job.id === requestId && overlay.setPartial(r),
+      });
+      controls.reportRun(res);
+      if (job.id !== requestId) continue; // a newer line arrived meanwhile
+      overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
+      if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Use "Try with the cloud" above to continue.');
+      if (res.error) console.warn('[Pipe Up]', res.error);
+    }
+  } finally {
+    busy = false;
+  }
 }
 
 const nextBtn = document.getElementById('next');
@@ -167,7 +206,7 @@ document.getElementById('auto').addEventListener('click', (e) => {
   e.currentTarget.setAttribute('aria-pressed', String(on));
   e.currentTarget.textContent = on ? 'Stop auto-play' : 'Auto-play';
   clearInterval(timer);
-  if (on) timer = setInterval(() => !overlay.hasSuggestions() && nextBtn.click(), 9000);
+  if (on) timer = setInterval(() => !overlay.hasSuggestions() && !busy && nextBtn.click(), 9000);
 });
 document.getElementById('say').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -180,9 +219,9 @@ document.getElementById('sample').addEventListener('click', async () => {
   location.reload();
 });
 
-initFirebase({
+const engineReady = initFirebase({
   firebaseConfig: __FIREBASE_CONFIG__,
-  appCheck: { kind: 'recaptcha', siteKey: __RECAPTCHA_SITE_KEY__ },
+  appCheck: __RECAPTCHA_SITE_KEY__ ? { provider: new ReCaptchaEnterpriseProvider(__RECAPTCHA_SITE_KEY__) } : {},
 }).then((firebase) => {
   engine = new SuggestionEngine({
     firebase,
@@ -191,4 +230,5 @@ initFirebase({
     getSettings: () => settings,
   });
   engine.warmUp();
+  return engine;
 });

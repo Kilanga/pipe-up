@@ -1,71 +1,87 @@
 # Pipe Up
 
-**Reply suggestions in video calls for people with speech differences — on-device AI first, with Firebase AI Logic hybrid inference.**
+**A backup channel for people who stutter in video calls — reply suggestions and turn-holding phrases in Google Meet, generated on your device with Firebase AI Logic hybrid inference.**
 
-People who stutter, or who live with mild dysarthria or word-finding difficulties, often stay silent in video meetings: there is time pressure, no visual cue that the other person has finished, and talking over each other is common. Pipe Up is a Chrome extension that reads the live captions Google Meet already displays, suggests three short replies when the other person pauses, and lets the user answer by chat, by voice, or both — or answer out loud themselves and simply press **4**.
+Most people who stutter speak for themselves, and should. But video calls make it harder: there is time pressure, no visual cue that the other person has finished, and a block can look like a frozen connection. In a UK survey of people who stammer, 65% said video calls increase their anxiety and 63% said they make communication harder than face to face ([summary](https://www.nbt.nhs.uk/sites/default/files/document/Stammer_Executive_Summary.pdf)). In co-design research, people who stutter asked for ways to *hold the floor* during a block and to normalize stuttering — not for a tool that speaks for them ([Wu et al., DIS 2024](https://news.cornell.edu/stories/2024/07/redesigning-videoconferencing-and-people-who-stutter)).
 
-> Pipe Up is a communication aid. It does not diagnose, treat or claim to improve speech.
+Pipe Up follows that brief. It reads the captions Google Meet already shows and, when a block hits at the wrong moment, offers a backup: a one-key *"I'm still speaking, one moment."*, and three short replies grounded in what you prepared, to post in the chat or have read aloud. Your voice stays first: press **4** whenever you answered yourself, and nothing is ever sent without you.
+
+> Pipe Up is a communication aid. It does not diagnose, treat or claim to change how anyone speaks.
+
+**Try it:** https://pipe-up-demo.web.app (simulated call, no Meet meeting needed) · **Extension:** [latest release](https://github.com/Kilanga/pipe-up/releases/latest)
 
 ## What it does
 
-- **Three short replies** (12 words max) after a pause in the captions. Keys **1 / 2 / 3** to pick, **Enter** to send, **Esc** to cancel. Nothing is sent without confirmation.
-- **Mixed mode — key 4: "I answered myself".** Pipe Up assumes you can speak; it steps aside and keeps following the conversation.
-- **Briefing.** Before the call, write notes, list *My positions*, and/or upload a document (.txt, .md, .pdf, read locally with pdf.js). Suggestions are grounded in what you prepared and labelled *From your briefing*; the prompt forbids inventing facts, numbers or commitments.
-- **Learns your phrasing on your device.** Every reply you pick, type or say yourself is stored locally (IndexedDB) and the closest past replies become style examples in the prompt. *Don't learn* switch, *What Pipe Up has learned* screen, delete one or everything. 90-day retention, 500 events max.
-- **Quick phrases** (Alt+1…3): "One moment, please.", "Could you repeat that?"…
-- **Output:** chat only, chat + voice, voice only (see *Status* for voice).
+- **Hold the floor:** **Alt+1** posts "I'm still speaking, one moment." Your quick phrases are editable; an optional, empty-by-default line lets you tell others about your stutter in your own words (**Alt+D**).
+- **Three short replies** (12 words max) after a pause in the captions, or only when you ask (**Alt+S**, "on-demand" mode). Keys **1 / 2 / 3** to pick, **Enter** to send, **Tab** to edit before sending, **Esc** to cancel.
+- **Key 4 — "I answered myself":** Pipe Up steps aside and keeps following the conversation.
+- **Briefing:** before the call, list *My positions*, write notes and/or upload a document (.txt, .md, .pdf, read locally with pdf.js). Suggestions grounded in it are labelled *From your briefing*; the model is told never to invent facts, numbers or commitments.
+- **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 max). *Don't learn* switch, *What Pipe Up has learned* screen, delete one or everything. Nothing you say out loud is recorded.
+- **Output:** Meet chat, a local voice in the call, or both. The voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet mutes it too.
 
 ## How Firebase AI Logic is used
 
 All generation goes through the Firebase AI Logic Web SDK (`firebase/ai`) — see [`core/engine.js`](core/engine.js):
 
 ```js
-const ai = getAI(app, { backend: new GoogleAIBackend() });
+const ai = getAI(app, { backend: new GoogleAIBackend(), useLimitedUseAppCheckTokens: true });
 
-// On-device by default: Gemini Nano through Chrome's Prompt API
+// Default: Gemini Nano on the device, rules as a system prompt, JSON output
 const deviceModel = getGenerativeModel(ai, {
   mode: InferenceMode.ONLY_ON_DEVICE,
-  onDeviceParams: { createOptions: {...}, promptOptions: { responseConstraint: RESPONSE_JSON_SCHEMA } },
+  onDeviceParams: { createOptions: { initialPrompts: [{ role: 'system', content: rules }] },
+                    promptOptions: { responseConstraint: RESPONSE_JSON_SCHEMA } },
 });
-// Cloud fallback, only after explicit consent
-const hybridModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE, inCloudParams: {...} });
+// After consent only: let the SDK fall back to the cloud when Nano is missing…
+const hybridModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE, onDeviceParams, inCloudParams });
+// …or force the cloud when Nano is present but failed
+const cloudModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
 
-const result = await deviceModel.generateContent(prompt);
-result.response.inferenceSource; // "on_device" | "in_cloud" → drives the badge
+const { stream, response } = await deviceModel.generateContentStream(prompt); // replies appear as they complete
+(await response).inferenceSource; // ON_DEVICE | IN_CLOUD → badge and routing log
 ```
 
-- **Hybrid inference:** Gemini Nano on the device first (private and fast); cloud Gemini only when the device cannot run Nano *and* the user allowed it. The badge shows where each suggestion was really generated, from `inferenceSource`.
-- **What goes to the cloud:** only the last two caption lines. The personal history is never sent; briefing excerpts only with a second, separate opt-in.
-- **Structured output** on both paths with the same JSON schema.
-- **App Check:** reCAPTCHA Enterprise (Fraud Defense) on the hosted demo; a locally entered debug token in the extension (MV3 cannot load the reCAPTCHA script). On-device suggestions need no network at all.
-- **Remote Config:** prompt version, pause length, max words, number of examples, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
+- **Hybrid inference, privacy first:** on-device by default; the cloud is used only when the device cannot run Gemini Nano (or Nano fails) *and* the user allowed it. The badge and the *Where suggestions were generated* log read `inferenceSource` for every request, with the reason for the route.
+- **What may reach the cloud:**
+
+  | Data | On device | Cloud (after consent) |
+  | --- | --- | --- |
+  | Last caption lines | 3 | 2 |
+  | *My positions* and briefing excerpts | yes | only with a second, separate opt-in |
+  | Your past replies (style examples) | yes | never |
+  | Audio | never | never |
+
+- **Streaming** on both paths with the same JSON schema; one request at a time, the newest question wins (Gemini Nano cannot cancel a running request).
+- **Prompt safety:** captions and documents are fenced as data, with length limits, so text in a shared document or a caption cannot steer the model.
+- **App Check:** reCAPTCHA Enterprise (Fraud Defense) on the hosted demo, limited-use tokens on every cloud request; a debug token kept only in the extension's own storage (MV3 extensions cannot load reCAPTCHA). On-device suggestions need no network.
+- **Remote Config:** prompt variant (`prompt_version`: plain, warm, professional), pause length, max words, examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
 
 ## Architecture
 
 ```
-Google Meet captions ──▶ content script (overlay, keys 1–4, chat output)
-                               │  chrome.runtime messages
+Google Meet captions ──▶ content script: overlay, keys, chat output ──▶ Meet chat
+                               │  named port (one side panel serves one Meet tab)
                                ▼
                          side panel = engine (core/)
-                   prompt · briefing retrieval · local memory
-                               │
-                     Firebase AI Logic (hybrid)
-                ┌──────────────┴──────────────┐
+             prompt · briefing retrieval · local memory · local voice (Piper)
+                               │                                 │
+                     Firebase AI Logic (hybrid)          PCM audio ──▶ page script mixes it
+                ┌──────────────┴──────────────┐                        into Meet's microphone
          Gemini Nano (on device)      Gemini (cloud, consent only)
 ```
 
 ```
 core/        engine (Firebase AI Logic), prompt, briefing, memory, text ranking
 shared/      in-call overlay, settings/briefing/memory screens, document reader
-extension/   Manifest V3 extension (content script, side panel, service worker)
+extension/   Manifest V3 extension (content scripts, side panel, voice)
 demo-web/    hosted demo: a simulated call using the same core and overlay
 test/        unit tests (node --test)
 ```
 
 ## Try it
 
-- **Hosted demo:** https://pipe-up-demo.web.app — a simulated call, no Meet meeting needed. Click *Load Sam's sample briefing*, then *Start the call*.
-- **Extension:** download `pipe-up-extension.zip` from the latest release, unzip, open `chrome://extensions`, enable Developer mode, *Load unpacked*. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*.
+- **Hosted demo:** https://pipe-up-demo.web.app — click *Load Sam's sample briefing*, then *Start the call*. On a computer without Gemini Nano, click *Try with the cloud*.
+- **Extension:** download `pipe-up-extension.zip` from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest), unzip, open `chrome://extensions`, enable Developer mode, *Load unpacked*. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. For the voice, click *Set up the voice* in the Live tab (about 60 MB, once).
 
 **On-device requirements:** Chrome desktop 139+, about 22 GB free disk space, a GPU with more than 4 GB of VRAM. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and restart Chrome.
 
@@ -73,24 +89,26 @@ test/        unit tests (node --test)
 
 1. Create a Firebase project, add a Web app, enable **Firebase AI Logic** (Gemini Developer API).
 2. App Check: register a reCAPTCHA Enterprise (Fraud Defense) site key for your hosting domain; for the extension, create a debug token and paste it in *Settings → Cloud access*.
-3. Copy `config/firebase.example.json` to `config/firebase.local.json` and fill it in (this file is git-ignored).
+3. Copy `config/firebase.example.json` to `config/firebase.local.json` and fill it in (git-ignored).
 4. `npm install && npm test && npm run build` → `dist/extension`, `dist/demo`, `dist/pipe-up-extension.zip`.
 5. `firebase deploy --only hosting,remoteconfig`.
 
 ## Privacy
 
-No audio is captured: Pipe Up only reads captions Meet already shows. No transcript is kept beyond the last few lines in memory. No analytics. Permissions are limited to `meet.google.com`, storage and the side panel.
+Pipe Up reads the captions Meet already shows; it never records audio or keeps a transcript beyond the last few lines in memory. To speak for you, it mixes its local voice into your microphone stream only while it plays. No analytics. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
 
-## Status
+## Known limits
 
-Built for #BuildHybridAI 2026, starting November 12, 2026. Working: captions reading, suggestions (on-device and cloud), briefing (typed + document), local learning, chat output, quick phrases, key 4, demo page. **In progress:** voice into the call. The Web Speech API's audio cannot be captured, so voice output needs a local speech engine (WebAssembly) mixed into the microphone stream; until then, voice modes also post to the chat (the demo page plays the voice on your speakers).
+- Meet's page changes often; captions and chat are found through accessible labels in the main UI languages. If your own captions are not labelled "You", set your display name in *Settings*.
+- Gemini Nano's on-device prompts support English best; Pipe Up declares English.
+- The voice is English (Piper `en_US-hfc_female-medium`).
 
 ## Prior art and credits
 
-Pipe Up builds on ideas from AAC research and products (e.g. SpeakEasy, Lingraphica, Weinberg et al. CHI 2026 on personalized AAC) and from meeting reply assistants. Its focus is the middle ground: people who *can* speak but not always when and how they want, in work video calls.
+Pipe Up builds on AAC research and products (SpeakEasy, Lingraphica, Valencia et al. CHI 2023 on AI replies in AAC, Weinberg et al. CHI 2026) and on Wu et al.'s co-design work with people who stutter. Its focus is the middle ground: people who *can* speak but not always when and how they want, in work video calls.
 
-Open-source dependencies: Firebase JS SDK, pdf.js (Apache-2.0), esbuild (MIT). Code written with the help of an AI coding assistant (Claude). No pre-existing project code was reused.
+Built during #BuildHybridAI 2026, starting November 12, 2026. Code written with the help of an AI coding assistant (Claude). No pre-existing project code was reused.
 
 ## License
 
-[Apache-2.0](LICENSE)
+Pipe Up's code: [Apache-2.0](LICENSE). The built extension also bundles separately licensed components, including the optional voice module's phonemizer (espeak-ng, GPL-3.0): see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

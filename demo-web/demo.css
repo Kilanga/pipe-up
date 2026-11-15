@@ -18,3 +18,5 @@
 .chat h2 { font-size: 1em; margin: 0 0 6px; }
 .chat ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .side { border-left: 1px solid var(--line); overflow: auto; }
+.banner { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 12px 20px; background: #fef3c7; color: #422006; border-bottom: 1px solid #f59e0b; }
+.banner p { margin: 0; max-width: 90ch; }

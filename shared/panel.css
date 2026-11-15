@@ -35,3 +35,14 @@ textarea, input[type=text], input[type=password], select { width: 100%; font: in
 progress { width: 100%; }
 .status { font-weight: 500; }
 [hidden] { display: none !important; }
+.connection { font-weight: 500; color: var(--muted); }
+.connection.on { color: var(--fg); }
+.log { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; font-size: .9em; }
+.log li { border-left: 3px solid var(--line); padding-left: 8px; }
+.route { font-weight: 600; }
+.route.on_device { color: #15803d; }
+.route.in_cloud { color: #1d4ed8; }
+.route.fallback, .route.blocked { color: #b45309; }
+@media (prefers-color-scheme: dark) {
+  .route.on_device { color: #86efac; } .route.in_cloud { color: #93c5fd; } .route.fallback, .route.blocked { color: #fcd34d; }
+}

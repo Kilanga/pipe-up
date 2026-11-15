@@ -11,7 +11,8 @@ export async function extractText(file) {
   const name = file.name.toLowerCase();
   if (name.endsWith('.pdf') || file.type === 'application/pdf') {
     if (!workerSet) throw new Error('PDF reader not ready');
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    if (file.size > 20_000_000) throw new Error('file too large (20 MB max)');
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
     const pages = [];
     for (let i = 1; i <= Math.min(doc.numPages, 40); i++) {
       const page = await doc.getPage(i);
@@ -21,5 +22,6 @@ export async function extractText(file) {
     return pages.join('\n\n').replace(/[ \t]+\n/g, '\n').trim();
   }
   if (file.size > 2_000_000) throw new Error('file too large (2 MB max)');
+  // Plain text only: the text is shown for review before it is saved.
   return (await file.text()).trim();
 }

@@ -1,6 +1,6 @@
 {
   "parameters": {
-    "prompt_version": { "defaultValue": { "value": "1" }, "description": "Prompt template version", "valueType": "STRING" },
+    "prompt_version": { "defaultValue": { "value": "1" }, "description": "Prompt variant: 1 plain, 2 warm, 3 professional", "valueType": "STRING" },
     "pause_ms": { "defaultValue": { "value": "1200" }, "description": "Silence in the captions (ms) before suggesting", "valueType": "NUMBER" },
     "max_words": { "defaultValue": { "value": "12" }, "description": "Maximum words per suggestion", "valueType": "NUMBER" },
     "examples_k": { "defaultValue": { "value": "3" }, "description": "Past replies used as style examples", "valueType": "NUMBER" },

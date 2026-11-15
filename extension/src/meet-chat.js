@@ -1,51 +1,69 @@
 // Sends a message in the Google Meet chat. Falls back to the clipboard
 // (with a notice) when Meet's layout cannot be driven.
 
-const CHAT_BUTTON = [
-  'button[aria-label*="Chat with everyone" i]',
-  'button[aria-label*="chat" i][aria-pressed]',
-  'button[aria-label*="Discuter avec tous" i]',
-  'button[aria-label*="Chat" i]',
-];
-const TEXTAREA = [
-  'textarea[aria-label*="Send a message" i]',
-  'textarea[aria-label*="Envoyer un message" i]',
-  'textarea[jsname]',
-  'textarea',
-];
+// "Send a message" / "Chat" in Meet's main UI languages.
+const CHAT_LABELS = ['chat with everyone', 'discuter avec tous', 'chatear con todos', 'mit allen chatten', 'chatta con tutti', 'conversar com todos', 'chat', 'discussion'];
+const BOX_LABELS = ['send a message', 'envoyer un message', 'enviar un mensaje', 'nachricht senden', 'invia un messaggio', 'enviar uma mensagem', 'bericht verzenden', 'wyślij wiadomość'];
+const SEND_WORDS = ['send', 'envoyer', 'enviar', 'senden', 'invia', 'verzenden', 'wyślij', 'отправить', '送信', '发送', '전송', 'gửi'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const first = (sels) => sels.map((s) => document.querySelector(s)).find(Boolean) || null;
+const label = (n) => (n.getAttribute('aria-label') || '').toLowerCase();
 
-async function findTextarea() {
-  let ta = first(TEXTAREA);
-  if (ta) return ta;
-  const btn = first(CHAT_BUTTON);
-  if (btn && btn.getAttribute('aria-pressed') !== 'true') btn.click();
-  for (let i = 0; i < 15 && !ta; i++) {
-    await sleep(100);
-    ta = first(TEXTAREA);
-  }
-  return ta;
+function findChatBox() {
+  const areas = [...document.querySelectorAll('textarea')].filter((t) => t.offsetParent !== null);
+  // 1. A textarea labelled like Meet's chat box.
+  const labelled = areas.find((t) => BOX_LABELS.some((l) => label(t).includes(l)));
+  if (labelled) return labelled;
+  // 2. Otherwise, only a textarea that sits next to a "send" button, so a
+  //    Q&A or feedback field is never used by mistake.
+  return areas.find((t) => findSendButton(t)) || null;
 }
 
-export async function sendToMeetChat(text) {
+function findSendButton(box) {
+  let node = box.parentElement;
+  for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+    const btn = [...node.querySelectorAll('button')].find((b) => SEND_WORDS.some((w) => label(b).includes(w)));
+    if (btn) return btn;
+  }
+  return null;
+}
+
+function findChatToggle() {
+  const buttons = [...document.querySelectorAll('button[aria-pressed]')];
+  for (const l of CHAT_LABELS) {
+    const b = buttons.find((x) => label(x).includes(l));
+    if (b) return b;
+  }
+  return null;
+}
+
+async function openChatBox() {
+  let box = findChatBox();
+  if (box) return box;
+  const toggle = findChatToggle();
+  if (toggle && toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
+  for (let i = 0; i < 20 && !box; i++) {
+    await sleep(100);
+    box = findChatBox();
+  }
+  return box;
+}
+
+async function sendNow(text) {
   try {
-    const ta = await findTextarea();
-    if (!ta) throw new Error('chat box not found');
+    const box = await openChatBox();
+    if (!box) throw new Error('chat box not found');
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-    ta.focus();
-    setter.call(ta, text);
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(50);
-    const sendBtn =
-      ta.closest('form, [role="region"], aside, div')?.querySelector('button[aria-label*="Send" i], button[aria-label*="Envoyer" i]') ||
-      document.querySelector('button[aria-label*="Send a message" i], button[aria-label*="Envoyer un message" i]');
+    box.focus();
+    setter.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(60);
+    const sendBtn = findSendButton(box);
     if (sendBtn && !sendBtn.disabled) sendBtn.click();
-    else ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-    await sleep(150);
-    ta.blur();
-    if (ta.value.trim() === text.trim()) throw new Error('message not sent');
+    else box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    await sleep(200);
+    box.blur();
+    if (box.value.trim() === text.trim()) throw new Error('message not sent');
     return { ok: true };
   } catch (e) {
     try {
@@ -55,4 +73,12 @@ export async function sendToMeetChat(text) {
       return { ok: false, copied: false, error: String(e.message || e) };
     }
   }
+}
+
+// One message at a time: two quick presses never type into the box together.
+let queue = Promise.resolve();
+export function sendToMeetChat(text) {
+  const next = queue.then(() => sendNow(text));
+  queue = next.catch(() => {});
+  return next;
 }

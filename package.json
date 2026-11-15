@@ -1,6 +1,6 @@
 {
   "name": "pipe-up",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reply suggestions for people with speech differences in video calls — on-device first with Firebase AI Logic hybrid inference",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -11,6 +11,8 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
+    "@mintplex-labs/piper-tts-web": "^1.0.5",
     "firebase": "^13.3.0",
     "pdfjs-dist": "^6.5.438"
   },

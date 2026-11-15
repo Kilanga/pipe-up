@@ -1,10 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource } from 'firebase/ai';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider, CustomProvider } from 'firebase/app-check';
+import { initializeAppCheck, CustomProvider } from 'firebase/app-check';
 import { getRemoteConfig, fetchAndActivate, getValue } from 'firebase/remote-config';
 
 import { REMOTE_DEFAULTS, FALLBACK_REPLIES } from './config.js';
-import { buildPrompt, parseReplies, RESPONSE_JSON_SCHEMA } from './prompt.js';
+import { buildPrompt, parseReplies, partialReplies, systemRules, RESPONSE_JSON_SCHEMA } from './prompt.js';
 import { retrieveBriefing } from './briefing.js';
 import { similarExamples, ignoredSuggestions } from './memory.js';
 
@@ -12,20 +12,19 @@ const LANG = [{ type: 'text', languages: ['en'] }];
 
 /**
  * Initializes Firebase, App Check and Remote Config.
- * appCheck: { kind: 'recaptcha', siteKey } on the hosted web demo,
- *           { kind: 'debug', token } in the extension (MV3 cannot load the
- *           reCAPTCHA script; the token is entered locally, never committed).
+ * appCheck: { provider } — an App Check provider built by the caller (the
+ *           hosted demo passes reCAPTCHA Enterprise; keeping that import out
+ *           of this file keeps remote scripts out of the extension bundle), or
+ *           { debugToken } — the extension's locally entered debug token.
  */
-export async function initFirebase({ firebaseConfig, appCheck }) {
+export async function initFirebase({ firebaseConfig, appCheck = {} }) {
   const app = initializeApp(firebaseConfig);
-  if (appCheck?.kind === 'recaptcha' && appCheck.siteKey) {
-    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheck.siteKey), isTokenAutoRefreshEnabled: true });
-  } else if (appCheck?.kind === 'debug' && appCheck.token) {
-    globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN = appCheck.token;
+  if (appCheck.provider) {
+    initializeAppCheck(app, { provider: appCheck.provider, isTokenAutoRefreshEnabled: true });
+  } else if (appCheck.debugToken) {
+    globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN = appCheck.debugToken;
     initializeAppCheck(app, {
-      provider: new CustomProvider({
-        getToken: () => Promise.reject(new Error('Debug token only')),
-      }),
+      provider: new CustomProvider({ getToken: () => Promise.reject(new Error('Debug token only')) }),
       isTokenAutoRefreshEnabled: true,
     });
   }
@@ -43,7 +42,10 @@ export async function initFirebase({ firebaseConfig, appCheck }) {
   } catch (e) {
     console.warn('[Pipe Up] Remote Config unavailable, using bundled defaults', e);
   }
-  return { app, ai: getAI(app, { backend: new GoogleAIBackend() }), remote };
+  // Limited-use App Check tokens: each cloud request carries a fresh,
+  // single-use token, which protects the Gemini API against replay.
+  const ai = getAI(app, { backend: new GoogleAIBackend(), useLimitedUseAppCheckTokens: true });
+  return { app, ai, remote };
 }
 
 /** Chrome's on-device model status, without triggering a download. */
@@ -56,6 +58,13 @@ export async function deviceStatus() {
     return 'unavailable';
   }
 }
+
+const STATUS_WORDS = {
+  unsupported: 'not supported by this browser',
+  unavailable: 'not available on this computer',
+  downloadable: 'not downloaded yet',
+  downloading: 'still downloading',
+};
 
 export class SuggestionEngine {
   /**
@@ -72,17 +81,25 @@ export class SuggestionEngine {
     this.getSettings = getSettings;
     this.remote = firebase.remote;
     this.forceCloud = false; // demo switch: simulates a computer without Gemini Nano
+    this.maxWords = Number(this.remote.max_words) || 12;
     this.#buildModels();
   }
 
   #buildModels() {
     const { ai } = this.firebase;
+    const rules = systemRules({ maxWords: this.maxWords, variant: String(this.remote.prompt_version || '1') });
     const onDeviceParams = {
-      createOptions: { expectedInputs: LANG, expectedOutputs: LANG },
+      createOptions: {
+        expectedInputs: LANG,
+        expectedOutputs: LANG,
+        // Gemini Nano gets the fixed rules as a system prompt.
+        initialPrompts: [{ role: 'system', content: rules }],
+      },
       promptOptions: { responseConstraint: RESPONSE_JSON_SCHEMA },
     };
     const inCloudParams = {
       model: this.remote.cloud_model,
+      systemInstruction: rules,
       generationConfig: {
         responseMimeType: 'application/json',
         responseJsonSchema: RESPONSE_JSON_SCHEMA,
@@ -90,8 +107,11 @@ export class SuggestionEngine {
         maxOutputTokens: 256,
       },
     };
-    // Firebase AI Logic hybrid inference. On-device by default; the cloud
-    // model is only reachable through the explicit, consented path below.
+    // Three Firebase AI Logic hybrid modes:
+    // - ONLY_ON_DEVICE: the default, nothing leaves the computer;
+    // - PREFER_ON_DEVICE: after consent, the SDK picks the cloud when the
+    //   device cannot run Gemini Nano;
+    // - ONLY_IN_CLOUD: after consent, when Nano is present but failed.
     this.deviceModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams, inCloudParams });
     this.hybridModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE, onDeviceParams, inCloudParams });
     this.cloudModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
@@ -107,7 +127,7 @@ export class SuggestionEngine {
    * first suggestion takes seconds instead of ~20 s. Never uses the cloud.
    */
   async warmUp() {
-    if ((await deviceStatus()) !== 'available' || this.warmed) return;
+    if (this.warmed || (await deviceStatus()) !== 'available') return;
     this.warmed = true;
     try {
       await this.deviceModel.generateContent(buildPrompt({ lines: [{ speaker: 'Other person', text: 'Hello, can you hear me?' }] }));
@@ -120,66 +140,89 @@ export class SuggestionEngine {
     return Boolean(this.getSettings().cloudConsent && this.remote.cloud_enabled);
   }
 
+  /** Streams one request and returns the parsed replies and the real route. */
+  async #run(model, prompt, { hasBriefing, onPartial }) {
+    const { stream, response } = await model.generateContentStream(prompt);
+    let buf = '';
+    let shown = 0;
+    for await (const chunk of stream) {
+      buf += chunk.text();
+      const partial = partialReplies(buf);
+      if (onPartial && partial.length > shown) {
+        shown = partial.length;
+        onPartial(partial);
+      }
+    }
+    const final = await response;
+    return {
+      replies: parseReplies(buf, { maxWords: this.maxWords, hasBriefing }),
+      route: final.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device',
+    };
+  }
+
   /**
    * @param {Array<{speaker?:string,text:string}>} lines recent captions, last = what was just said
-   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:'on_device'|'in_cloud'|'fallback'|'blocked', ms:number, error?:string}>}
+   * @param {{onPartial?: (replies:Array<{text:string,source:string}>) => void}} [opts]
+   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:string, reason:string, ms:number, hasBriefing:boolean, error?:string}>}
    */
-  async suggest(lines) {
+  async suggest(lines, { onPartial } = {}) {
     const t0 = performance.now();
     const utterance = lines.at(-1)?.text || '';
     const settings = this.getSettings();
-    const maxWords = Number(this.remote.max_words) || 12;
     const events = settings.dontLearn ? [] : await this.memory.all();
     const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
     const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length);
-    const local = {
-      lines,
-      briefing,
-      examples: similarExamples(events, utterance, Number(this.remote.examples_k) || 3),
-      avoid: ignoredSuggestions(events, utterance),
-      maxWords,
-    };
-    const done = (replies, route, error, usedBriefing = hasBriefing) => ({ replies, route, ms: Math.round(performance.now() - t0), error, hasBriefing: usedBriefing });
+    const done = (replies, route, reason, usedBriefing, error) => ({
+      replies,
+      route,
+      reason,
+      ms: Math.round(performance.now() - t0),
+      hasBriefing: Boolean(usedBriefing),
+      error,
+    });
 
     const status = this.forceCloud ? 'unavailable' : await deviceStatus();
+    let deviceProblem = `Gemini Nano ${STATUS_WORDS[status] || status}`;
     if (status === 'available') {
+      const prompt = buildPrompt({
+        lines,
+        briefing,
+        examples: similarExamples(events, utterance, Number(this.remote.examples_k) || 3),
+        avoid: ignoredSuggestions(events, utterance),
+      });
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const result = await this.deviceModel.generateContent(buildPrompt(local));
-          const replies = parseReplies(result.response.text(), { maxWords, hasBriefing });
-          if (replies) return done(replies, sourceOf(result));
+          const r = await this.#run(this.deviceModel, prompt, { hasBriefing, onPartial });
+          if (r.replies) return done(r.replies, r.route, 'Gemini Nano on this computer', hasBriefing);
+          deviceProblem = 'Gemini Nano gave an unreadable answer';
         } catch (e) {
-          if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e), false);
+          deviceProblem = 'Gemini Nano error: ' + (e?.message || e);
           break;
         }
       }
     }
-    if (!this.cloudAllowed()) return done(FALLBACK_REPLIES, 'blocked', `on-device model: ${status}`, false);
+    if (!this.cloudAllowed()) {
+      const why = this.remote.cloud_enabled ? 'cloud not allowed' : 'cloud switched off';
+      return done(FALLBACK_REPLIES, status === 'available' ? 'fallback' : 'blocked', `${deviceProblem}; ${why}: basic replies`, false);
+    }
 
-    // Cloud path: personal history is never sent; briefing only if the
-    // user turned on the separate option.
-    const cloudPrompt = buildPrompt({
-      lines: lines.slice(-2),
-      briefing: settings.shareBriefingWithCloud ? briefing : { chunks: [], positions: [] },
-      examples: [],
-      avoid: [],
-      maxWords,
-    });
+    // Cloud path: personal history is never sent; briefing excerpts only if
+    // the user turned on the separate option.
+    const share = Boolean(settings.shareBriefingWithCloud);
+    const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [] } });
+    // Nano present but failed: force the cloud. Otherwise let the SDK's
+    // PREFER_ON_DEVICE mode decide (it picks the cloud when Nano is missing).
+    const model = status === 'available' || this.forceCloud ? this.cloudModel : this.hybridModel;
+    const sent = share && hasBriefing ? 'last 2 caption lines and briefing excerpts sent' : 'last 2 caption lines sent';
     try {
-      const model = this.forceCloud ? this.cloudModel : this.hybridModel;
-      const result = await model.generateContent(cloudPrompt);
-      const replies = parseReplies(result.response.text(), {
-        maxWords,
-        hasBriefing: hasBriefing && settings.shareBriefingWithCloud,
-      });
-      const shared = hasBriefing && Boolean(settings.shareBriefingWithCloud);
-      return done(replies || FALLBACK_REPLIES, replies ? sourceOf(result) : 'fallback', undefined, shared);
+      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial });
+      if (r.replies) {
+        const where = r.route === 'in_cloud' ? `cloud, ${sent}` : 'on this computer';
+        return done(r.replies, r.route, `${deviceProblem}; ${where}`, share && hasBriefing);
+      }
+      return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud answer unreadable: basic replies`, false);
     } catch (e) {
-      return done(FALLBACK_REPLIES, 'fallback', String(e?.message || e), false);
+      return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud error: basic replies`, false, String(e?.message || e));
     }
   }
-}
-
-function sourceOf(result) {
-  return result.response.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device';
 }

@@ -1,20 +1,28 @@
 import { createOverlay } from '../../shared/overlay.js';
-import { watchCaptions } from './meet-captions.js';
+import { watchCaptions, setMyName } from './meet-captions.js';
 import { sendToMeetChat } from './meet-chat.js';
 import { DEFAULT_SETTINGS } from '../../core/config.js';
 
 let settings = { ...DEFAULT_SETTINGS };
-let context = '';
+let port = null; // to the side panel, which runs the AI
 let requestId = 0;
+let voiceReady = false;
+const contexts = new Map(); // request id -> the line it answers
+const unsent = []; // learning events kept while the side panel is closed
 
 const overlay = createOverlay({
-  onSend: async ({ text, action, choice, shown }) => {
+  onSend: async ({ text, action, choice, shown, context }) => {
+    log({ action, reply: text, choice, shown, context });
     await deliver(text);
-    log({ action, reply: text, choice, shown });
   },
-  onSpoke: (shown) => log({ action: 'spoke', reply: '', shown }),
-  onDismiss: (shown) => log({ action: 'dismissed', reply: '', shown }),
+  onSpoke: ({ shown, context }) => log({ action: 'spoke', reply: '', shown, context }),
+  onDismiss: ({ shown, context }) => log({ action: 'dismissed', reply: '', shown, context }),
   onSettings: (patch) => saveSettings(patch),
+  onRequest: () => {
+    const lines = watcher.current();
+    if (lines.length) request(lines);
+    else overlay.notice('Nothing in the captions yet.');
+  },
   onOpenPanel: () => chrome.runtime.sendMessage({ type: 'pu:open-panel' }),
 });
 
@@ -25,6 +33,7 @@ chrome.storage.onChanged.addListener((changes) => {
 
 function applySettings(s) {
   settings = { ...DEFAULT_SETTINGS, ...(s || {}) };
+  setMyName(settings.myName);
   overlay.setSettings(settings);
 }
 
@@ -33,41 +42,92 @@ async function saveSettings(patch) {
   await chrome.storage.local.set({ settings: { ...DEFAULT_SETTINGS, ...(s || {}), ...patch } });
 }
 
+// ---------- Side panel connection ----------
+chrome.runtime.onConnect.addListener((p) => {
+  if (p.name !== 'pipe-up') return;
+  if (port && port !== p) port.disconnect();
+  port = p;
+  p.onMessage.addListener(onPanelMessage);
+  p.onDisconnect.addListener(() => {
+    if (port === p) port = null;
+  });
+  while (unsent.length) p.postMessage({ type: 'event', event: unsent.shift() });
+});
+
 function log(event) {
-  chrome.runtime.sendMessage({ type: 'pu:event', event: { context, ...event } }).catch(() => {});
+  if (port) port.postMessage({ type: 'event', event });
+  else if (unsent.length < 50) unsent.push(event);
 }
 
-async function deliver(text) {
-  const mode = settings.outputMode;
-  if (mode === 'chat' || mode === 'chat+voice' || mode === 'voice') {
-    // Voice into the call needs the local speech engine (see README);
-    // until it is ready, every mode also posts to the chat.
-    const r = await sendToMeetChat(text);
-    if (!r.ok) overlay.notice(r.copied ? 'Could not post in the chat: copied to your clipboard.' : 'Could not post in the chat.');
-    if (mode !== 'chat') overlay.notice('Voice into the call is not available yet: sent to the chat.');
+function onPanelMessage(msg) {
+  if (msg.type === 'voice') {
+    voiceReady = Boolean(msg.ready);
+    overlay.setVoiceAvailable(voiceReady);
+    return;
+  }
+  if (msg.type === 'audio') return playInCall(msg);
+  if (msg.id !== requestId) return; // an answer to an older question
+  if (msg.type === 'partial') overlay.setPartial(msg.replies);
+  if (msg.type === 'result') {
+    overlay.setSuggestions(msg.replies, msg.route, contexts.get(msg.id));
+    if (msg.route === 'blocked') overlay.notice('On-device AI is not ready. Open the side panel (⚙) to set it up or allow the cloud.');
+    if (msg.pauseMs) watcher.setPause(msg.pauseMs);
   }
 }
 
+function request(lines) {
+  if (!port) {
+    overlay.notice('Open the Pipe Up side panel (⚙) to get suggestions.');
+    return;
+  }
+  const id = ++requestId;
+  const context = lines.at(-1)?.text || '';
+  contexts.set(id, context);
+  contexts.delete(id - 20);
+  overlay.setThinking(context);
+  port.postMessage({ type: 'suggest', id, lines });
+}
+
+// ---------- Output ----------
+async function deliver(text) {
+  const wantsVoice = settings.outputMode !== 'chat';
+  const canSpeak = wantsVoice && voiceReady && port;
+  if (canSpeak) port.postMessage({ type: 'speak', text });
+  if (settings.outputMode === 'voice' && canSpeak) return;
+  const r = await sendToMeetChat(text);
+  if (!r.ok) {
+    overlay.notice(r.copied ? 'Could not post in the chat: your reply is in the clipboard.' : 'Could not post in the chat. Please type it there.');
+  } else if (wantsVoice && !canSpeak) {
+    overlay.notice('The voice is not set up yet (side panel, Live tab): your reply went to the chat.');
+  }
+}
+
+// The side panel synthesizes the voice; the page script mixes it into the
+// microphone that Meet uses (voice-main.js).
+function playInCall({ pcm16, rate }) {
+  const bin = atob(pcm16);
+  const i16 = new Int16Array(bin.length / 2);
+  for (let i = 0; i < i16.length; i++) i16[i] = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16 >> 16;
+  const pcm = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) pcm[i] = i16[i] / 0x7fff;
+  window.postMessage({ type: 'pipe-up:pcm', pcm, rate }, '*');
+}
+window.addEventListener('message', (e) => {
+  if (e.source !== window || e.data?.type !== 'pipe-up:pcm-status' || e.data.ok) return;
+  overlay.notice(
+    e.data.reason === 'muted'
+      ? 'You are muted in Meet: unmute so others can hear the voice.'
+      : 'Join the call with your microphone on, then Pipe Up can speak for you.'
+  );
+});
+
+// ---------- Captions ----------
 const watcher = watchCaptions({
   pauseMs: 1200,
   onLine: (speaker, text) => overlay.setLine(speaker, text),
-  onSelfSpeaking: () => {},
   onMissing: () => overlay.notice('Turn on captions in Meet (CC button) so Pipe Up can follow the conversation.'),
-  onPause: async (lines) => {
-    const id = ++requestId;
-    context = lines.at(-1)?.text || '';
-    overlay.setThinking();
-    try {
-      const res = await chrome.runtime.sendMessage({ type: 'pu:suggest', lines });
-      if (id !== requestId) return; // a newer line arrived meanwhile
-      if (!res) throw new Error('no engine');
-      overlay.setSuggestions(res.replies, res.route);
-      if (res.route === 'blocked') overlay.notice('On-device AI is not ready. Open the side panel to set it up or allow the cloud.');
-      if (res.pauseMs) watcher.setPause(res.pauseMs);
-    } catch {
-      if (id !== requestId) return;
-      overlay.setSuggestions([], 'idle');
-      overlay.notice('Open the Pipe Up side panel (⚙) to start suggestions.');
-    }
+  onPause: (lines) => {
+    if (settings.suggestMode === 'onDemand') return; // waits for Alt+S
+    request(lines);
   },
 });
