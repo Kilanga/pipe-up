@@ -94,6 +94,11 @@ export function mountControls(root, o) {
       if (eng) eng.forceCloud = e.target.checked;
     },
   });
+  // Declared before panes.Live.append(), which calls voiceSection().
+  const voiceStatus = h('p', { role: 'status' }, 'Checking the voice…');
+  const voiceProgress = h('progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Voice download progress' });
+  const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: setupVoiceClick }, 'Set up the voice (about 60 MB, once)');
+  const voiceTest = h('button', { hidden: true, onclick: () => o.voice.test().catch((e) => (voiceStatus.textContent = 'Voice error: ' + e.message)) }, 'Test the voice');
   panes.Live.append(
     o.demo ? null : connection,
     h('h2', {}, 'On-device AI'),
@@ -120,16 +125,12 @@ export function mountControls(root, o) {
     h('p', { class: 'muted' }, 'Read from Firebase AI Logic (inferenceSource) for each request.'),
     log
   );
-  const voiceStatus = h('p', { role: 'status' }, 'Checking the voice…');
-  const voiceProgress = h('progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Voice download progress' });
-  const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: setupVoiceClick }, 'Set up the voice (about 60 MB, once)');
-  const voiceTest = h('button', { hidden: true, onclick: () => o.voice.test().catch((e) => (voiceStatus.textContent = 'Voice error: ' + e.message)) }, 'Test the voice');
   function voiceSection() {
     return h(
       'div',
       { class: 'field' },
       h('h2', {}, 'Voice into the call'),
-      h('p', { class: 'muted' }, 'Optional. A voice generated on this computer reads your chosen reply to the other participants (choose "Chat + voice" or "Voice only" in the call panel). Your text never leaves your computer.'),
+      h('p', { class: 'muted' }, 'Optional. A synthetic voice, generated on this computer, reads your chosen reply aloud in the call (choose "Chat + synthetic voice" or "Synthetic voice only" in the call panel). Others hear a computer voice, not yours: you can tell them first with your Alt+D line. Your text never leaves your computer.'),
       voiceStatus,
       voiceProgress,
       h('div', { class: 'row' }, voiceSetup, voiceTest)
@@ -138,8 +139,9 @@ export function mountControls(root, o) {
   async function refreshVoice() {
     if (!o.voice) return;
     const v = await o.voice.status();
-    voiceStatus.textContent = { ready: 'The voice is ready.', loading: 'Starting the voice…', missing: 'The voice is not set up.' }[v] || v;
-    voiceSetup.hidden = v !== 'missing';
+    voiceStatus.textContent = { ready: 'The voice is ready.', loading: 'Starting the voice…', missing: 'The voice is not set up.', failed: 'The voice could not start. Try again.' }[v] || v;
+    voiceSetup.hidden = v !== 'missing' && v !== 'failed';
+    voiceSetup.textContent = v === 'failed' ? 'Try again' : 'Set up the voice (about 60 MB, once)';
     voiceTest.hidden = v !== 'ready';
   }
   async function setupVoiceClick() {
@@ -205,7 +207,7 @@ export function mountControls(root, o) {
   });
   const briefInfo = h('p', { class: 'muted', role: 'status' });
   panes.Briefing.append(
-    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and will not invent facts. Everything stays on this computer.'),
+    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Everything stays on this computer.'),
     h('label', { class: 'field' }, h('b', {}, 'My positions'), h('span', { class: 'muted' }, 'Always used first. One per line.'), positions),
     h('label', { class: 'field' }, h('b', {}, 'Write or paste your notes'), notes),
     h('div', { class: 'field' }, h('b', {}, 'Upload a document'), h('span', { class: 'muted' }, '.txt, .md or .pdf, read on this computer'), file, docName, docText),
@@ -263,7 +265,9 @@ export function mountControls(root, o) {
   async function renderMemory() {
     const events = (await o.memory.all()).reverse();
     const r = adoptionRate(events);
-    rate.textContent = r == null ? 'No data yet.' : `Suggestions used: ${Math.round(r * 100)}% of ${events.filter((e) => e.shown?.length).length} moments.`;
+    const moments = events.filter((e) => e.shown?.length).length;
+    const used = events.filter((e) => e.shown?.length && (e.action === 'picked' || e.action === 'edited')).length;
+    rate.textContent = r == null ? 'No data yet.' : `You used a suggestion in ${used} of ${moments} moments. Speaking yourself counts just as much.`;
     list.replaceChildren(
       ...events.slice(0, 200).map((e) =>
         h(
@@ -282,7 +286,7 @@ export function mountControls(root, o) {
   const mode = h('select', {}, h('option', { value: 'auto' }, 'After each pause'), h('option', { value: 'onDemand' }, 'Only when I ask (Alt+S)'));
   const myName = h('input', { type: 'text', placeholder: 'e.g. Sam Taylor', autocomplete: 'off' });
   const fillerInputs = [0, 1, 2].map(() => h('input', { type: 'text' }));
-  const disclosure = h('input', { type: 'text', placeholder: 'e.g. I stutter, so I sometimes answer in the chat.' });
+  const disclosure = h('input', { type: 'text', placeholder: 'e.g. I stutter. Sometimes I answer in the chat, or a computer voice reads my reply.' });
   const scale = h('select', {}, ...[['1', 'Normal'], ['1.15', 'Large'], ['1.3', 'Extra large']].map(([v, l]) => h('option', { value: v }, l)));
   const token = h('input', { type: 'password', placeholder: 'App Check debug token (optional)', autocomplete: 'off' });
   const saved = h('span', { class: 'muted', role: 'status' });

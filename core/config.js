@@ -34,9 +34,15 @@ export const FALLBACK_REPLIES = [
 
 // Settings saved by an older version get the new defaults where they changed.
 export const SETTINGS_VERSION = 2;
+const V1_FILLERS = ['One moment, please.', 'Could you repeat that?', "I'll answer in the chat."];
+
 export function migrateSettings(saved = {}) {
   const s = { ...DEFAULT_SETTINGS, ...saved };
-  if ((saved.settingsVersion || 1) < 2) s.fillers = DEFAULT_SETTINGS.fillers;
+  // Version 2 changed the default quick phrases: replace only the ones the
+  // user had not edited.
+  if ((saved.settingsVersion || 1) < 2 && Array.isArray(saved.fillers)) {
+    s.fillers = DEFAULT_SETTINGS.fillers.map((f, i) => (V1_FILLERS.includes(saved.fillers[i]) || !saved.fillers[i] ? f : saved.fillers[i]));
+  }
   s.settingsVersion = SETTINGS_VERSION;
   return s;
 }

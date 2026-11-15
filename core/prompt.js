@@ -64,7 +64,8 @@ const tail = (s, n) => {
   const t = String(s || '').replace(/\s+/g, ' ').trim();
   return t.length > n ? '…' + t.slice(-(n - 1)) : t;
 };
-const fence = (s) => String(s).replace(/<<<|>>>/g, '');
+// Any run of 2+ angle brackets goes, so no pattern can rebuild <<< or >>>.
+const fence = (s) => String(s).replace(/[<>]{2,}/g, '');
 
 /**
  * Builds the data part of the request (rules travel separately). Gemini Nano

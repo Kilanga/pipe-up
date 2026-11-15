@@ -142,7 +142,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     el(
       'div',
       { class: 'body' },
-      el('div', { class: 'row' }, output, el('label', { class: 'toggle' }, dontLearn, "Don't learn")),
+      el('div', { class: 'row' }, output, el('label', { class: 'toggle' }, dontLearn, "Don't learn from this call")),
       line,
       el('div', { class: 'muted' }, '1 / 2 / 3 to pick · Enter to send · Tab to edit · Esc to cancel'),
       status,
@@ -162,7 +162,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
 
   function renderOutput() {
     const opts = [['chat', 'Chat only']];
-    if (state.voice) opts.push(['chat+voice', 'Chat + voice'], ['voice', 'Voice only']);
+    if (state.voice) opts.push(['chat+voice', 'Chat + synthetic voice'], ['voice', 'Synthetic voice only']);
     output.replaceChildren(...opts.map(([v, l]) => el('option', { value: v }, l)));
     const wanted = state.settings.outputMode || 'chat';
     output.value = opts.some(([v]) => v === wanted) ? wanted : 'chat';
@@ -194,10 +194,13 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     }
   }
 
-  function select(i) {
+  function select(i, { focus = false } = {}) {
     if (!state.replies[i]) return;
     state.selected = i;
     renderCards();
+    // Chosen from the keyboard: focus moves to the card, so Enter, Tab and
+    // Escape now act on Pipe Up and not on whatever Meet button had focus.
+    if (focus) root.querySelectorAll('.card')[i]?.focus({ preventScroll: true });
   }
 
   function editSelected() {
@@ -217,9 +220,16 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     clear();
   }
 
+  // A quick phrase holds the floor: the suggestions stay on screen and are not
+  // counted as ignored.
+  function sendFiller(text) {
+    cb.onSend({ text, action: 'filler', shown: [], context: state.context });
+    flash('Sent: ' + text);
+  }
+
   function spoke() {
     cb.onSpoke(info());
-    clear('Got it. Tracking continues.');
+    clear('Got it. Pipe Up stays in the background.');
   }
 
   function clear(msg) {
@@ -249,17 +259,26 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     return t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''));
   }
 
+  // Physical key first: on AZERTY "1" is Shift+&, and on a Mac Option+1 is "¡".
+  function digitOf(e) {
+    const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code || '');
+    if (m) return Number(m[1]);
+    return /^[1-4]$/.test(e.key) ? Number(e.key) : null;
+  }
+
   function onKey(e) {
-    if (e.repeat || e.isComposing || e.keyCode === 229 || isTyping(e)) return;
+    if (e.repeat || e.isComposing || e.keyCode === 229) return;
+    // Alt shortcuts work everywhere, even while typing (AltGr = Ctrl+Alt is left alone).
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
       const k = e.key.toLowerCase();
+      const d = digitOf(e);
       let text = null;
-      if (/^[123]$/.test(k)) text = state.settings.fillers?.[Number(k) - 1];
+      if (d && d <= 3) text = state.settings.fillers?.[d - 1];
       if (k === 'd' || e.code === 'KeyD') text = state.settings.disclosure || null;
       if (text) {
         e.preventDefault();
         e.stopPropagation();
-        send({ text, action: 'filler' });
+        sendFiller(text);
       } else if ((k === 's' || e.code === 'KeyS') && cb.onRequest) {
         e.preventDefault();
         e.stopPropagation();
@@ -267,13 +286,19 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       }
       return;
     }
-    if (e.ctrlKey || e.metaKey || e.altKey || !focusIsNeutral()) return;
+    if (isTyping(e) || e.ctrlKey || e.metaKey || e.altKey) return;
     const hasReplies = state.replies.length > 0;
-    if (/^[123]$/.test(e.key) && state.replies[Number(e.key) - 1]) {
+    const d = digitOf(e);
+    // Digits do nothing on a focused button, so they work wherever focus is.
+    if (d && d <= 3 && state.replies[d - 1]) {
       e.preventDefault();
       e.stopPropagation();
-      select(Number(e.key) - 1);
-    } else if (e.key === '4' && hasReplies) {
+      select(d - 1, { focus: true });
+      return;
+    }
+    // Enter, Tab and Escape could act on a focused Meet control: only when focus is neutral or ours.
+    if (!focusIsNeutral()) return;
+    if (d === 4 && hasReplies) {
       e.preventDefault();
       e.stopPropagation();
       spoke();
@@ -281,7 +306,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       e.preventDefault();
       e.stopPropagation();
       send({ text: state.replies[state.selected].text, action: 'picked', choice: state.selected + 1 });
-    } else if (e.key === 'Tab' && state.selected != null) {
+    } else if (e.key === 'Tab' && !e.shiftKey && state.selected != null) {
       e.preventDefault();
       editSelected();
     } else if (e.key === 'Escape' && hasReplies) {
@@ -303,6 +328,12 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     },
     /** A new question: old suggestions are withdrawn at once. */
     setThinking(context) {
+      // A suggestion opened for editing but not changed belongs to the old
+      // question: withdraw it. Text the user changed is theirs: keep it.
+      if (state.editingFrom != null && typed.value.trim() === state.replies[state.editingFrom]?.text) {
+        typed.value = '';
+        typed.blur();
+      }
       state.replies = [];
       state.selected = null;
       state.editingFrom = null;
@@ -320,7 +351,10 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     setSuggestions(replies, route, context) {
       const keep = state.selected != null && replies?.[state.selected]?.text === state.replies[state.selected]?.text;
       state.replies = replies || [];
-      if (!keep) state.selected = null;
+      if (!keep) {
+        state.selected = null;
+        state.editingFrom = null;
+      }
       if (context != null) state.context = context;
       this.setRoute(route);
       renderCards();
@@ -342,14 +376,15 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       ask.hidden = s.suggestMode !== 'onDemand' || !cb.onRequest;
       panel.style.setProperty('--scale', s.textScale || 1);
       const chips = (s.fillers || []).map((f, i) =>
-        el('button', { class: 'chip' + (i === 0 ? ' hold' : ''), title: `Alt+${i + 1}`, onclick: () => send({ text: f, action: 'filler' }) }, f)
+        el('button', { class: 'chip' + (i === 0 ? ' hold' : ''), title: `Alt+${i + 1}`, onclick: () => sendFiller(f) }, f)
       );
-      if (s.disclosure) chips.push(el('button', { class: 'chip', title: 'Alt+D', onclick: () => send({ text: s.disclosure, action: 'filler' }) }, s.disclosure));
+      if (s.disclosure) chips.push(el('button', { class: 'chip', title: 'Alt+D', onclick: () => sendFiller(s.disclosure) }, s.disclosure));
       fillers.replaceChildren(...chips);
     },
     clear: () => clear(),
     notice: flash,
     hasSuggestions: () => state.replies.length > 0,
+    isThinking: () => state.route === 'thinking',
     /** True while the user is choosing or editing a reply. */
     isEngaged: () => state.selected != null || state.editingFrom != null || root.activeElement === typed,
     destroy() {

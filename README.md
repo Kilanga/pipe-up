@@ -4,7 +4,7 @@
 
 Most people who stutter speak for themselves, and should. But video calls make it harder: there is time pressure, no visual cue that the other person has finished, and a block can look like a frozen connection. In a UK survey of people who stammer, 65% said video calls increase their anxiety and 63% said they make communication harder than face to face ([summary](https://www.nbt.nhs.uk/sites/default/files/document/Stammer_Executive_Summary.pdf)). In co-design research, people who stutter asked for ways to *hold the floor* during a block and to normalize stuttering — not for a tool that speaks for them ([Wu et al., DIS 2024](https://news.cornell.edu/stories/2024/07/redesigning-videoconferencing-and-people-who-stutter)).
 
-Pipe Up follows that brief. It reads the captions Google Meet already shows and, when a block hits at the wrong moment, offers a backup: a one-key *"I'm still speaking, one moment."*, and three short replies grounded in what you prepared, to post in the chat or have read aloud. Your voice stays first: press **4** whenever you answered yourself, and nothing is ever sent without you.
+Pipe Up follows that brief. It reads the captions Google Meet already shows and, when a block comes at a busy moment, offers a backup: a one-key *"I'm still speaking, one moment."*, and three short replies grounded in what you prepared, to post in the chat or have read aloud. Your own speech comes first: press **4** whenever you answered yourself, and nothing is ever sent without you.
 
 > Pipe Up is a communication aid. It does not diagnose, treat or claim to change how anyone speaks.
 
@@ -54,7 +54,7 @@ const { stream, response } = await deviceModel.generateContentStream(prompt); //
 - **Streaming** on both paths with the same JSON schema; one request at a time, the newest question wins (Gemini Nano cannot cancel a running request).
 - **Prompt safety:** captions and documents are fenced as data, with length limits, so text in a shared document or a caption cannot steer the model.
 - **App Check:** reCAPTCHA Enterprise (Fraud Defense) on the hosted demo, limited-use tokens on every cloud request; a debug token kept only in the extension's own storage (MV3 extensions cannot load reCAPTCHA). On-device suggestions need no network.
-- **Remote Config:** prompt variant (`prompt_version`: plain, warm, professional), pause length, max words, examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
+- **Remote Config:** prompt variant (`prompt_version`: `1` plain, `2` warm, `3` professional), pause length, max words, examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
 
 ## Architecture
 
@@ -80,8 +80,12 @@ test/        unit tests (node --test)
 
 ## Try it
 
-- **Hosted demo:** https://pipe-up-demo.web.app — click *Load Sam's sample briefing*, then *Start the call*. On a computer without Gemini Nano, click *Try with the cloud*.
+- **Hosted demo:** https://pipe-up-demo.web.app — click *Load Sam's sample briefing*, then *Start the call* (or *Auto-play*). On a computer without Gemini Nano, click *Try with the cloud*. The demo's voice is the browser's speech synthesis; the extension uses the local Piper voice.
 - **Extension:** download `pipe-up-extension.zip` from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest), unzip, open `chrome://extensions`, enable Developer mode, *Load unpacked*. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. For the voice, click *Set up the voice* in the Live tab (about 60 MB, once).
+
+Without Gemini Nano, the extension offers basic replies only (its cloud path needs an App Check debug token): use the hosted demo to try the cloud path.
+
+**Measured** on a desktop with an RTX 4070 Ti, Chrome 157: first on-device suggestion about 1.2 s after the pause; first cloud call about 6 s.
 
 **On-device requirements:** Chrome desktop 139+, about 22 GB free disk space, a GPU with more than 4 GB of VRAM. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and restart Chrome.
 
@@ -93,6 +97,10 @@ test/        unit tests (node --test)
 4. `npm install && npm test && npm run build` → `dist/extension`, `dist/demo`, `dist/pipe-up-extension.zip`.
 5. `firebase deploy --only hosting,remoteconfig`.
 
+## For colleagues in the call
+
+They see short messages in the Meet chat, posted by the person who uses Pipe Up, or hear a synthetic voice through that person's microphone. Nothing changes on their side, and nothing they say is recorded. Users can explain it in their own words with the optional disclosure line (Alt+D).
+
 ## Privacy
 
 Pipe Up reads the captions Meet already shows; it never records audio or keeps a transcript beyond the last few lines in memory. To speak for you, it mixes its local voice into your microphone stream only while it plays. No analytics. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
@@ -101,11 +109,11 @@ Pipe Up reads the captions Meet already shows; it never records audio or keeps a
 
 - Meet's page changes often; captions and chat are found through accessible labels in the main UI languages. If your own captions are not labelled "You", set your display name in *Settings*.
 - Gemini Nano's on-device prompts support English best; Pipe Up declares English.
-- The voice is English (Piper `en_US-hfc_female-medium`).
+- The voice is English and there is one voice for now (Piper `en_US-hfc_female-medium`). Choosing a voice, and a French voice, are next.
 
 ## Prior art and credits
 
-Pipe Up builds on AAC research and products (SpeakEasy, Lingraphica, Valencia et al. CHI 2023 on AI replies in AAC, Weinberg et al. CHI 2026) and on Wu et al.'s co-design work with people who stutter. Its focus is the middle ground: people who *can* speak but not always when and how they want, in work video calls.
+Pipe Up builds on AAC research and products (SpeakEasy, Lingraphica, Valencia et al. CHI 2023 on AI replies in AAC, Weinberg et al. CHI 2026) and on Wu et al.'s co-design work with people who stutter. Its focus is the middle ground: people who speak for themselves and want a backup when speech doesn't come on time, in work video calls.
 
 Built during #BuildHybridAI 2026, starting November 12, 2026. Code written with the help of an AI coding assistant (Claude). No pre-existing project code was reused.
 

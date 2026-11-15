@@ -49,7 +49,13 @@ chrome.runtime.onConnect.addListener((p) => {
   port = p;
   p.onMessage.addListener(onPanelMessage);
   p.onDisconnect.addListener(() => {
-    if (port === p) port = null;
+    if (port !== p) return;
+    port = null;
+    // A question sent to the closed panel will not be answered.
+    if (overlay.isThinking()) {
+      overlay.clear();
+      overlay.notice('The Pipe Up side panel closed. Open it to get suggestions again.');
+    }
   });
   while (unsent.length) p.postMessage({ type: 'event', event: unsent.shift() });
 });
@@ -66,6 +72,12 @@ function onPanelMessage(msg) {
     return;
   }
   if (msg.type === 'audio') return playInCall(msg);
+  if (msg.type === 'speak-failed') {
+    const text = lastSpoken;
+    lastSpoken = null;
+    if (settings.outputMode === 'voice' && text) return fallbackToChat(text, 'The voice could not read this reply.');
+    return overlay.notice('The voice could not read this reply.');
+  }
   if (msg.id !== requestId) return; // an answer to an older question
   if (msg.type === 'partial') overlay.setPartial(msg.replies);
   if (msg.type === 'result') {
@@ -89,10 +101,14 @@ function request(lines) {
 }
 
 // ---------- Output ----------
+let lastSpoken = null; // the reply being spoken, until the page reports back
 async function deliver(text) {
   const wantsVoice = settings.outputMode !== 'chat';
   const canSpeak = wantsVoice && voiceReady && port;
-  if (canSpeak) port.postMessage({ type: 'speak', text });
+  if (canSpeak) {
+    lastSpoken = text;
+    port.postMessage({ type: 'speak', text });
+  }
   if (settings.outputMode === 'voice' && canSpeak) return;
   const r = await sendToMeetChat(text);
   if (!r.ok) {
@@ -110,16 +126,27 @@ function playInCall({ pcm16, rate }) {
   for (let i = 0; i < i16.length; i++) i16[i] = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16 >> 16;
   const pcm = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) pcm[i] = i16[i] / 0x7fff;
-  window.postMessage({ type: 'pipe-up:pcm', pcm, rate }, '*');
+  window.postMessage({ type: 'pipe-up:pcm', pcm, rate }, location.origin);
 }
+const VOICE_PROBLEMS = {
+  muted: 'You are muted in Meet: unmute so others can hear the voice.',
+  'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
+  reload: 'The voice was set up after you joined: reload this Meet tab to use it.',
+  'no-mic': 'Join the call with your microphone on, then Pipe Up can speak for you.',
+};
 window.addEventListener('message', (e) => {
-  if (e.source !== window || e.data?.type !== 'pipe-up:pcm-status' || e.data.ok) return;
-  overlay.notice(
-    e.data.reason === 'muted'
-      ? 'You are muted in Meet: unmute so others can hear the voice.'
-      : 'Join the call with your microphone on, then Pipe Up can speak for you.'
-  );
+  if (e.source !== window || e.origin !== location.origin || e.data?.type !== 'pipe-up:pcm-status') return;
+  const text = lastSpoken;
+  lastSpoken = null;
+  if (e.data.ok) return;
+  // "Voice only" must not lose the reply: post it in the chat instead.
+  if (settings.outputMode === 'voice' && text) fallbackToChat(text, VOICE_PROBLEMS[e.data.reason] || VOICE_PROBLEMS['no-mic']);
+  else overlay.notice(VOICE_PROBLEMS[e.data.reason] || VOICE_PROBLEMS['no-mic']);
 });
+async function fallbackToChat(text, why) {
+  const r = await sendToMeetChat(text);
+  overlay.notice(why + (r.ok ? ' Your reply went to the chat.' : ' Your reply is not sent: please type it.'));
+}
 
 // ---------- Captions ----------
 const watcher = watchCaptions({

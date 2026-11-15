@@ -135,7 +135,9 @@ async function updateBanner() {
   const s = await deviceStatus();
   banner.hidden = s === 'available' || settings.cloudConsent;
 }
-document.getElementById('try-cloud').addEventListener('click', () => settingsStore.set({ cloudConsent: true }));
+// Sam's briefing is fictional, so the demo also shares its excerpts with the
+// cloud; otherwise a judge without Gemini Nano never sees grounded replies.
+document.getElementById('try-cloud').addEventListener('click', () => settingsStore.set({ cloudConsent: true, shareBriefingWithCloud: true }));
 updateBanner();
 
 // ---- simulated captions and one request at a time ----
@@ -238,7 +240,9 @@ document.getElementById('say').addEventListener('submit', (e) => {
   if (input.value.trim()) say('Maya', input.value.trim());
   input.value = '';
 });
-document.getElementById('sample').addEventListener('click', async () => {
+const sampleBtn = document.getElementById('sample');
+if (briefingCache?.positions || briefingCache?.docs?.length) sampleBtn.textContent = "Reload Sam's sample briefing";
+sampleBtn.addEventListener('click', async () => {
   await briefingStore.set(SAMPLE_BRIEFING);
   location.reload();
 });

@@ -13,7 +13,11 @@ const config = process.env.PIPE_UP_FIREBASE_CONFIG
   : existsSync(configPath)
     ? JSON.parse(readFileSync(configPath, 'utf8'))
     : JSON.parse(readFileSync(p('config/firebase.example.json'), 'utf8'));
-if (!process.env.PIPE_UP_FIREBASE_CONFIG && !existsSync(configPath)) console.warn('! No Firebase settings: building with placeholders');
+if (!process.env.PIPE_UP_FIREBASE_CONFIG && !existsSync(configPath)) {
+  // A release build with placeholder settings would not work: fail in CI.
+  if (process.env.CI) throw new Error('PIPE_UP_FIREBASE_CONFIG is not set');
+  console.warn('! No Firebase settings: building with placeholders');
+}
 
 const define = {
   __FIREBASE_CONFIG__: JSON.stringify(config.firebaseConfig),
@@ -32,6 +36,7 @@ await build({ ...common, entryPoints: [p('extension/src/background.js')], outfil
 // fs/path: Node-only branches of the Emscripten phonemizer, never run in Chrome.
 await build({ ...common, entryPoints: [p('extension/src/sidepanel.js')], outfile: ext + 'sidepanel.js', format: 'esm', external: ['fs', 'path'] });
 await build({ ...common, entryPoints: [p('extension/src/voice-main.js')], outfile: ext + 'voice-main.js', format: 'iife' });
+await build({ ...common, entryPoints: [p('extension/src/voice-flag.js')], outfile: ext + 'voice-flag.js', format: 'iife' });
 // Optional local voice module (Piper + ONNX Runtime + phonemizer), with licenses.
 const voice = ext + 'voice/';
 mkdirSync(voice, { recursive: true });

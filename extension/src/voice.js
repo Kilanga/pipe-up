@@ -2,9 +2,11 @@
 // WebAssembly (ONNX Runtime). Nothing is sent anywhere: the voice model is
 // downloaded once from Hugging Face, then kept in this extension's storage.
 //
-// Licensing: Piper voices and piper-tts-web are MIT; the phonemizer
-// (piper-phonemize with espeak-ng data) is GPL-3.0. They ship as a separate,
-// optional module in the extension's voice/ folder, with their licenses.
+// Licensing: piper-tts-web is MIT; the phonemizer (piper-phonemize with
+// espeak-ng data) is GPL-3.0 and ships as a separate, optional module in the
+// extension's voice/ folder, with its license. The voice model itself is not
+// bundled: it is downloaded from Hugging Face under its own license (see
+// THIRD_PARTY_NOTICES.md).
 import { TtsSession, stored } from '@mintplex-labs/piper-tts-web';
 
 export const VOICE_ID = 'en_US-hfc_female-medium';
@@ -37,9 +39,27 @@ export function setupVoice(onProgress) {
 
 let starting = null;
 export function startVoice(progress) {
-  starting ??= TtsSession.create({ voiceId: VOICE_ID, wasmPaths, progress }).then((s) => (session = s));
-  starting.catch(() => (starting = null));
+  starting ??= TtsSession.create({ voiceId: VOICE_ID, wasmPaths, progress })
+    .then((s) => (session = s))
+    .catch(async (e) => {
+      // The library keeps a half-built session and whatever it downloaded,
+      // even an error page: drop both so "Try again" really starts over.
+      TtsSession._instance = null;
+      starting = null;
+      session = null;
+      await removeDownloads();
+      throw e;
+    });
   return starting;
+}
+
+async function removeDownloads() {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry('piper', { recursive: true });
+  } catch {
+    // nothing stored
+  }
 }
 
 /**

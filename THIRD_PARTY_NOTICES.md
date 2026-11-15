@@ -16,7 +16,7 @@ user's computer.
 | piper-phonemize | via @diffusionstudio/piper-wasm 1.0.0 | MIT (`voice/licenses/MIT-piper-phonemize.txt`) | https://github.com/rhasspy/piper-phonemize |
 | @mintplex-labs/piper-tts-web (fork of @diffusionstudio/vits-web) | 1.0.5 | MIT | https://github.com/Mintplex-Labs/piper-tts-web |
 | ONNX Runtime Web | 1.31.1 | MIT (`voice/licenses/MIT-onnxruntime.txt`) | https://github.com/microsoft/onnxruntime |
-| Piper voice `en_US-hfc_female-medium` (downloaded at first use, not bundled) | — | see the voice's model card | https://huggingface.co/rhasspy/piper-voices |
+| Piper voice `en_US-hfc_female-medium` (downloaded at first use, not bundled) | — | trained on the hfc_female dataset, CC BY-NC-SA 4.0 per its model card: non-commercial use | https://huggingface.co/rhasspy/piper-voices |
 
 The GPL-3.0 phonemizer is distributed as a separate program file loaded at run time.
 Its complete corresponding source is available from the projects linked above.

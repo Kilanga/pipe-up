@@ -13,12 +13,12 @@
     <header class="top">
       <div>
         <h1>Pipe Up <span class="muted">demo call</span></h1>
-        <p class="muted">A simulated video call with live captions. Sam stutters and usually speaks for himself; when a block hits at the wrong moment, Pipe Up offers a backup: three short replies to post in the chat, all generated on this computer. Keys: 1, 2, 3 to pick, Enter to send, Tab to edit, 4 when you answered yourself, Alt+1 for "I'm still speaking".</p>
+        <p class="muted">A simulated video call with live captions. You are Sam, who stutters and usually speaks for himself. When a block comes at a busy moment, Pipe Up offers a backup: three short replies to post in the chat or have read aloud, generated on this computer when Gemini Nano is available (the badge shows where each one came from). Keys: 1, 2, 3 to pick, Enter to send, Tab to edit, 4 when you answered yourself, Alt+1 for "I'm still speaking".</p>
       </div>
       <a class="muted" href="https://github.com/Kilanga/pipe-up" target="_blank" rel="noopener">Source code</a>
     </header>
     <div class="banner" id="nano-banner" hidden role="region" aria-label="On-device AI not available">
-      <p><b>This browser can't run Gemini Nano on this computer.</b> Pipe Up normally works fully on-device. To try it here, allow the cloud: only the last two caption lines are sent to the Gemini API through Firebase.</p>
+      <p><b>This browser can't run Gemini Nano on this computer.</b> Pipe Up normally works fully on-device. To try it here, allow the cloud: the last two caption lines are sent to the Gemini API through Firebase. Sam's briefing is fictional, so this demo also sends the matching excerpts; in the extension that is a separate opt-in.</p>
       <button class="primary" id="try-cloud">Try with the cloud</button>
     </div>
     <div class="layout">
@@ -30,14 +30,15 @@
         </div>
         <div class="captions" role="region" aria-label="Captions" aria-live="off" id="captions"></div>
         <div class="callbar">
+          <button id="sample">1. Load Sam's sample briefing</button>
           <button class="primary" id="next">Start the call</button>
           <button id="auto" aria-pressed="false">Auto-play</button>
           <form id="say" class="say">
             <input type="text" id="sayText" placeholder="Or type what someone says…" aria-label="Line spoken by another participant" />
             <button type="submit">Say</button>
           </form>
-          <button id="sample">Load Sam's sample briefing</button>
         </div>
+        <p class="muted small">Demo voice: your browser's speech synthesis. The extension uses a local Piper voice mixed into your Meet microphone.</p>
         <section class="chat" aria-label="Call chat">
           <h2>Call chat</h2>
           <ol id="chat"></ol>
