@@ -1,6 +1,11 @@
-name: Attach extension build to release
+name: Release
 
+# A push to main that bumps package.json "version" creates the GitHub release
+# v<version> (notes from docs/releases/<version>.md) with the extension zip.
+# Publishing a release by hand also attaches the zip.
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
 
@@ -8,7 +13,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,14 +21,32 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - name: Version
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "release" ] || ! gh release view "v$V" >/dev/null 2>&1; then echo "go=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.v.outputs.go == 'true'
+        run: npm ci && npm test
       - name: Build
+        if: steps.v.outputs.go == 'true'
         env:
           # Firebase web settings (public identifiers, protected by App Check)
           PIPE_UP_FIREBASE_CONFIG: ${{ vars.PIPE_UP_FIREBASE_CONFIG }}
         run: npm run build
-      - name: Upload pipe-up-extension.zip
+      - name: Publish
+        if: steps.v.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/pipe-up-extension.zip --clobber
+        run: |
+          V=${{ steps.v.outputs.version }}
+          if [ "${{ github.event_name }}" = "release" ]; then
+            gh release upload "${{ github.event.release.tag_name }}" dist/pipe-up-extension.zip --clobber
+          else
+            NOTES=docs/releases/$V.md
+            [ -f "$NOTES" ] || NOTES=/dev/null
+            gh release create "v$V" dist/pipe-up-extension.zip --target "$GITHUB_SHA" --title "Pipe Up $V" --notes-file "$NOTES" --latest
+          fi
