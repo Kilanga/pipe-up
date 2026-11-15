@@ -161,7 +161,10 @@ function say(speaker, text) {
   );
   document.querySelectorAll('.tile').forEach((t) => t.classList.toggle('speaking', t.dataset.name === speaker));
   overlay.setLine(speaker, text);
-  if (settings.suggestMode === 'onDemand') return overlay.notice('Press Alt+S (or the button) when you want suggestions.');
+  if (settings.suggestMode === 'onDemand') {
+    scheduleAutoNext();
+    return overlay.notice('Press Alt+S (or the button) when you want suggestions.');
+  }
   // Simulates Meet's pause detection.
   setTimeout(() => ask(history.slice(-3)), Number(engine?.remote.pause_ms) || 1200);
 }
@@ -186,6 +189,7 @@ async function drain() {
       controls.reportRun(res);
       if (job.id !== requestId) continue; // a newer line arrived meanwhile
       overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
+      scheduleAutoNext();
       if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Use "Try with the cloud" above to continue.');
       if (res.error) console.warn('[Pipe Up]', res.error);
     }
@@ -201,12 +205,32 @@ nextBtn.addEventListener('click', () => {
   nextBtn.textContent = step >= SCRIPT.length ? 'Restart the call' : 'Next line';
   say(who, text);
 });
-document.getElementById('auto').addEventListener('click', (e) => {
-  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
-  e.currentTarget.setAttribute('aria-pressed', String(on));
-  e.currentTarget.textContent = on ? 'Stop auto-play' : 'Auto-play';
-  clearInterval(timer);
-  if (on) timer = setInterval(() => !overlay.hasSuggestions() && !busy && nextBtn.click(), 9000);
+// Auto-play: plays the scripted call line by line. After each set of
+// suggestions it leaves 8 seconds to read them, waits while you pick or edit
+// one, and stops at the end of the script.
+const autoBtn = document.getElementById('auto');
+let autoOn = false;
+function setAuto(on) {
+  autoOn = on;
+  autoBtn.setAttribute('aria-pressed', String(on));
+  autoBtn.textContent = on ? 'Stop auto-play' : 'Auto-play';
+  clearTimeout(timer);
+}
+function scheduleAutoNext(delay = 8000) {
+  if (!autoOn) return;
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    if (!autoOn) return;
+    if (overlay.isEngaged() || busy) return scheduleAutoNext(2000);
+    if (step >= SCRIPT.length) return setAuto(false);
+    nextBtn.click();
+  }, delay);
+}
+autoBtn.addEventListener('click', () => {
+  setAuto(!autoOn);
+  if (!autoOn) return;
+  if (step >= SCRIPT.length) step = 0;
+  nextBtn.click(); // start right away
 });
 document.getElementById('say').addEventListener('submit', (e) => {
   e.preventDefault();

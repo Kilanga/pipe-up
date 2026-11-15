@@ -350,6 +350,8 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     clear: () => clear(),
     notice: flash,
     hasSuggestions: () => state.replies.length > 0,
+    /** True while the user is choosing or editing a reply. */
+    isEngaged: () => state.selected != null || state.editingFrom != null || root.activeElement === typed,
     destroy() {
       window.removeEventListener('keydown', onKey, true);
       host.remove();
