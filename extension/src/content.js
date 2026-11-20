@@ -24,6 +24,8 @@ const overlay = createOverlay({
     else overlay.notice('Nothing in the captions yet.');
   },
   onOpenPanel: () => chrome.runtime.sendMessage({ type: 'pu:open-panel' }),
+  // Read in the side panel, on this computer only (never into the call).
+  onHear: (text) => port?.postMessage({ type: 'preview', text }),
 });
 
 chrome.storage.local.get('settings').then(({ settings: s }) => applySettings(s));

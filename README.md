@@ -17,6 +17,7 @@ Pipe Up follows that brief. It reads the captions Google Meet already shows and,
 - **Key 4 — "I answered myself":** Pipe Up steps aside and keeps following the conversation.
 - **Briefing:** before the call, list *My positions*, write notes and/or upload a document (.txt, .md, .pdf, read locally with pdf.js). Suggestions grounded in it are labelled *From your briefing*; the model is told never to invent facts, numbers or commitments.
 - **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 max). *Don't learn* switch, *What Pipe Up has learned* screen, delete one or everything. Nothing you say out loud is recorded.
+- **Display and reading options** (Settings, all off by default): *Easy reading* (more letter and line spacing, larger text, replies of 8 words at most, for dyslexia or reading under pressure), *One suggestion at a time*, *Hear the suggestions* (read aloud in your own headphones only, never into the call), *High contrast* (black and white with a yellow highlight; nothing relies on color alone), *Reduce motion* (the system setting is always followed).
 - **Output:** Meet chat, a local voice in the call, or both. The voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet mutes it too.
 
 ## How Firebase AI Logic is used

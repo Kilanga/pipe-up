@@ -81,8 +81,14 @@ export class SuggestionEngine {
     this.getSettings = getSettings;
     this.remote = firebase.remote;
     this.forceCloud = false; // demo switch: simulates a computer without Gemini Nano
-    this.maxWords = Number(this.remote.max_words) || 12;
+    this.maxWords = this.#wantedMaxWords();
     this.#buildModels();
+  }
+
+  // Easy reading asks for shorter replies (8 words at most).
+  #wantedMaxWords() {
+    const base = Number(this.remote.max_words) || 12;
+    return this.getSettings?.()?.easyReading ? Math.min(base, 8) : base;
   }
 
   #buildModels() {
@@ -169,6 +175,11 @@ export class SuggestionEngine {
     const t0 = performance.now();
     const utterance = lines.at(-1)?.text || '';
     const settings = this.getSettings();
+    const wanted = this.#wantedMaxWords();
+    if (wanted !== this.maxWords) {
+      this.maxWords = wanted;
+      this.#buildModels();
+    }
     const events = settings.dontLearn ? [] : await this.memory.all();
     const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
     const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length);

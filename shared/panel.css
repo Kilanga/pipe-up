@@ -46,3 +46,11 @@ progress { width: 100%; }
 @media (prefers-color-scheme: dark) {
   .route.on_device { color: #86efac; } .route.in_cloud { color: #93c5fd; } .route.fallback, .route.blocked { color: #fcd34d; }
 }
+
+/* Display and reading options (side panel) */
+.pu-easy { font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif; font-size: 15.5px; line-height: 1.7; letter-spacing: .04em; word-spacing: .12em; }
+.pu-contrast { --bg: #000; --fg: #fff; --muted: #fff; --line: #fff; --accent: #ffd60a; --accent-fg: #000; --soft: #000; background: #000; color: #fff; }
+.pu-contrast button, .pu-contrast input, .pu-contrast select, .pu-contrast textarea { border-width: 2px; }
+.pu-still *, .pu-still { transition: none !important; animation: none !important; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+body.is-panel:has(.pu-contrast) { background: #000; }

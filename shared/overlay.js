@@ -45,6 +45,22 @@ label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .
 .muted { color: #a1a1aa; font-size: .82em; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 [hidden] { display: none !important; }
+/* Display and reading options */
+.pu.easy { width: 380px; font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif;
+  font-size: calc(15.5px * var(--scale, 1)); line-height: 1.7; letter-spacing: .04em; word-spacing: .12em; }
+.pu.easy .card { padding: 10px; }
+.pu.easy .tag, .pu.easy .muted, .pu.easy .badge, .pu.easy .chip, .pu.easy .notice { font-size: .9em; }
+.pu.contrast { background: #000; color: #fff; border: 2px solid #fff; }
+.pu.contrast .head { background: #000; border-bottom: 2px solid #fff; }
+.pu.contrast .badge, .pu.contrast .num { background: #000; color: #fff; border: 1px solid #fff; }
+.pu.contrast .card, .pu.contrast .chip, .pu.contrast .self, .pu.contrast select, .pu.contrast input[type=text] { background: #000; color: #fff; border: 2px solid #fff; }
+.pu.contrast .card.sel, .pu.contrast .preview { background: #000; border: 3px solid #ffd60a; }
+.pu.contrast .card.sel .num { background: #ffd60a; color: #000; }
+.pu.contrast .tag, .pu.contrast .muted, .pu.contrast .line, .pu.contrast .hint, .pu.contrast label.toggle { color: #fff; }
+.pu.contrast .notice { color: #ffd60a; }
+.pu.contrast .ask { background: #ffd60a; color: #000; }
+.pu.contrast :focus-visible { outline: 3px solid #ffd60a; }
+.pu.still * { transition: none !important; animation: none !important; }
 @media (prefers-reduced-motion: no-preference) { .card, .chip { transition: border-color .12s; } }
 `;
 
@@ -86,6 +102,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   const state = { replies: [], selected: null, context: '', settings: {}, route: 'idle', editingFrom: null, voice: false };
 
   const badge = el('span', { class: 'badge', title: 'Where the last suggestions were generated' }, ROUTE_LABEL.idle);
+  const keysHint = el('div', { class: 'muted' });
+  const setKeysHint = (compact) => (keysHint.textContent = (compact ? '1 to pick' : '1 / 2 / 3 to pick') + ' · Enter to send · Tab to edit · Esc to cancel');
+  setKeysHint(false);
   const output = el('select', { 'aria-label': 'Where your reply goes', onchange: (e) => cb.onSettings({ outputMode: e.target.value }) });
   const dontLearn = el('input', { type: 'checkbox', onchange: (e) => cb.onSettings({ dontLearn: e.target.checked }) });
   const line = el('div', { class: 'line' }, 'Following the captions…');
@@ -144,7 +163,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       { class: 'body' },
       el('div', { class: 'row' }, output, el('label', { class: 'toggle' }, dontLearn, "Don't learn from this call")),
       line,
-      el('div', { class: 'muted' }, '1 / 2 / 3 to pick · Enter to send · Tab to edit · Esc to cancel'),
+      keysHint,
       status,
       ask,
       cards,
@@ -194,10 +213,16 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     }
   }
 
+  // Compact mode shows one suggestion; only what is shown is kept (and learned from).
+  const visible = (replies) => (state.settings.compact ? (replies || []).slice(0, 1) : replies || []);
+  // "Hear suggestions": read aloud in the user's own headphones, never into the call.
+  const hear = (text) => state.settings.hearSuggestions && text && cb.onHear?.(text);
+
   function select(i, { focus = false } = {}) {
     if (!state.replies[i]) return;
     state.selected = i;
     renderCards();
+    hear(state.replies[i].text);
     // Chosen from the keyboard: focus moves to the card, so Enter, Tab and
     // Escape now act on Pipe Up and not on whatever Meet button had focus.
     if (focus) root.querySelectorAll('.card')[i]?.focus({ preventScroll: true });
@@ -345,12 +370,13 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     /** Streaming: show the replies that are already complete. */
     setPartial(replies) {
       if (state.selected != null) return; // never move what the user is looking at
-      state.replies = replies || [];
+      state.replies = visible(replies);
       renderCards();
     },
     setSuggestions(replies, route, context) {
-      const keep = state.selected != null && replies?.[state.selected]?.text === state.replies[state.selected]?.text;
-      state.replies = replies || [];
+      replies = visible(replies);
+      const keep = state.selected != null && replies[state.selected]?.text === state.replies[state.selected]?.text;
+      state.replies = replies;
       if (!keep) {
         state.selected = null;
         state.editingFrom = null;
@@ -358,7 +384,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       if (context != null) state.context = context;
       this.setRoute(route);
       renderCards();
-      status.textContent = state.replies.length ? `${state.replies.length} suggestions ready.` : '';
+      const n = state.replies.length;
+      status.textContent = n ? (n === 1 ? '1 suggestion ready.' : `${n} suggestions ready.`) : '';
+      if (n && !keep) hear(state.replies.map((r, i) => (n > 1 ? `${i + 1}. ` : '') + r.text).join(' '));
     },
     setRoute(route) {
       state.route = route || 'idle';
@@ -375,6 +403,10 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       dontLearn.checked = Boolean(s.dontLearn);
       ask.hidden = s.suggestMode !== 'onDemand' || !cb.onRequest;
       panel.style.setProperty('--scale', s.textScale || 1);
+      setKeysHint(Boolean(s.compact));
+      panel.classList.toggle('easy', Boolean(s.easyReading));
+      panel.classList.toggle('contrast', Boolean(s.highContrast));
+      panel.classList.toggle('still', Boolean(s.reduceMotion));
       const chips = (s.fillers || []).map((f, i) =>
         el('button', { class: 'chip' + (i === 0 ? ' hold' : ''), title: `Alt+${i + 1}`, onclick: () => sendFiller(f) }, f)
       );

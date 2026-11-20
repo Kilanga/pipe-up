@@ -130,3 +130,8 @@ test('parseReplies rejects unusable output', () => {
   assert.equal(parseReplies(''), null);
   assert.equal(parseReplies('{"replies":[]}'), null);
 });
+
+test('easy reading asks Gemini for shorter replies', async () => {
+  const { systemRules } = await import('../core/prompt.js');
+  assert.match(systemRules({ maxWords: 8 }), /At most 8 words per reply/);
+});

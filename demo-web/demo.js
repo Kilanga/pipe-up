@@ -4,6 +4,7 @@ import { ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { initFirebase, SuggestionEngine, deviceStatus } from '../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../core/memory.js';
 import { DEFAULT_SETTINGS, migrateSettings } from '../core/config.js';
+import { speakPrivately } from '../shared/private-speech.js';
 import { createOverlay } from '../shared/overlay.js';
 import { mountControls } from '../shared/controls.js';
 import { setPdfWorker } from '../shared/extract.js';
@@ -94,6 +95,7 @@ const overlay = createOverlay(
     onDismiss: ({ shown, context }) => learn({ action: 'dismissed', reply: '', shown, context }),
     onSettings: (patch) => settingsStore.set(patch),
     onRequest: () => (history.length ? ask(history.slice(-3)) : overlay.notice('Start the call first.')),
+    onHear: (text) => speakPrivately(text) || overlay.notice('No local voice in this browser to read the suggestions.'),
   },
   { position: { right: '380px', bottom: '24px' } }
 );

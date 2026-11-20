@@ -17,6 +17,9 @@ const h = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
+// Element.append(null) would insert the text "null": skip empty slots.
+const put = (parent, ...kids) => parent.append(...kids.flat().filter((k) => k != null));
+
 const STATUS_TEXT = {
   available: 'Gemini Nano is ready on this computer. Suggestions stay on your device.',
   downloadable: 'Gemini Nano can be downloaded (one time, several minutes).',
@@ -94,12 +97,12 @@ export function mountControls(root, o) {
       if (eng) eng.forceCloud = e.target.checked;
     },
   });
-  // Declared before panes.Live.append(), which calls voiceSection().
+  // Declared before put(panes.Live, ...), which calls voiceSection().
   const voiceStatus = h('p', { role: 'status' }, 'Checking the voice…');
   const voiceProgress = h('progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Voice download progress' });
   const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: setupVoiceClick }, 'Set up the voice (about 60 MB, once)');
   const voiceTest = h('button', { hidden: true, onclick: () => o.voice.test().catch((e) => (voiceStatus.textContent = 'Voice error: ' + e.message)) }, 'Test the voice');
-  panes.Live.append(
+  put(panes.Live, 
     o.demo ? null : connection,
     h('h2', {}, 'On-device AI'),
     status,
@@ -206,7 +209,7 @@ export function mountControls(root, o) {
     },
   });
   const briefInfo = h('p', { class: 'muted', role: 'status' });
-  panes.Briefing.append(
+  put(panes.Briefing, 
     h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Everything stays on this computer.'),
     h('label', { class: 'field' }, h('b', {}, 'My positions'), h('span', { class: 'muted' }, 'Always used first. One per line.'), positions),
     h('label', { class: 'field' }, h('b', {}, 'Write or paste your notes'), notes),
@@ -254,7 +257,7 @@ export function mountControls(root, o) {
     h('button', { class: 'primary', onclick: async () => { await o.memory.clear(); confirmRow.hidden = true; renderMemory(); } }, 'Yes, delete'),
     h('button', { onclick: () => (confirmRow.hidden = true) }, 'Cancel')
   );
-  panes.Memory.append(
+  put(panes.Memory, 
     h('h2', {}, 'What Pipe Up has learned'),
     h('p', { class: 'muted' }, 'Your replies are stored only on this computer and used as examples of your style. Kept 90 days, 500 at most. Nothing you say out loud is recorded.'),
     rate,
@@ -289,8 +292,19 @@ export function mountControls(root, o) {
   const disclosure = h('input', { type: 'text', placeholder: 'e.g. I stutter. Sometimes I answer in the chat, or a computer voice reads my reply.' });
   const scale = h('select', {}, ...[['1', 'Normal'], ['1.15', 'Large'], ['1.3', 'Extra large']].map(([v, l]) => h('option', { value: v }, l)));
   const token = h('input', { type: 'password', placeholder: 'App Check debug token (optional)', autocomplete: 'off' });
+  // Display and reading options apply at once, in the call panel and here.
+  const DISPLAY = [
+    ['easyReading', 'Easy reading', 'More space between letters and lines, larger text, and shorter replies (8 words at most). Helpful with dyslexia or when reading under pressure.'],
+    ['compact', 'One suggestion at a time', 'Less to read: only the best reply is shown.'],
+    ['hearSuggestions', 'Hear the suggestions', 'Read aloud in your own headphones only, never into the call. Use headphones so others do not hear it.'],
+    ['highContrast', 'High contrast', 'Black and white with a yellow highlight. Nothing relies on color alone.'],
+    ['reduceMotion', 'Reduce motion', 'No transitions. Pipe Up also follows your system setting.'],
+  ];
+  const displayBoxes = Object.fromEntries(
+    DISPLAY.map(([key]) => [key, h('input', { type: 'checkbox', onchange: (e) => o.settings.set({ [key]: e.target.checked }) })])
+  );
   const saved = h('span', { class: 'muted', role: 'status' });
-  panes.Settings.append(
+  put(panes.Settings, 
     h('h2', {}, 'Suggestions'),
     h('label', { class: 'field' }, 'When to suggest replies', mode),
     o.demo ? null : h('label', { class: 'field' }, 'Your name as shown in Meet captions', h('span', { class: 'muted' }, 'Only needed if Meet does not label you "You", so your own words never trigger suggestions.'), myName),
@@ -299,6 +313,9 @@ export function mountControls(root, o) {
     ...fillerInputs.map((inp, i) => h('label', { class: 'field' }, `Phrase ${i + 1}`, inp)),
     h('label', { class: 'field' }, 'Tell others, if you want to (Alt+D)', h('span', { class: 'muted' }, 'Optional and empty by default: your words, your choice.'), disclosure),
     h('label', { class: 'field' }, 'Text size', scale),
+    h('h2', {}, 'Display and reading'),
+    h('p', { class: 'muted' }, 'Options, all off by default. They apply at once.'),
+    ...DISPLAY.map(([key, label, help]) => h('label', { class: 'check' }, displayBoxes[key], h('span', {}, h('b', {}, label + '. '), help))),
     o.debugToken
       ? h(
           'div',
@@ -332,6 +349,10 @@ export function mountControls(root, o) {
     fillerInputs.forEach((inp, i) => (inp.value = s.fillers?.[i] || ''));
     disclosure.value = s.disclosure || '';
     scale.value = String(s.textScale || 1);
+    for (const [key, box] of Object.entries(displayBoxes)) box.checked = Boolean(s[key]);
+    root.classList.toggle('pu-easy', Boolean(s.easyReading));
+    root.classList.toggle('pu-contrast', Boolean(s.highContrast));
+    root.classList.toggle('pu-still', Boolean(s.reduceMotion));
     if (o.debugToken) token.value = o.debugToken.get();
     tryCloud.hidden = lastStatus === 'available' || Boolean(s.cloudConsent);
   }

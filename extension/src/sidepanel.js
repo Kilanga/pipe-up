@@ -7,6 +7,7 @@ import { IdbMemoryStore, makeEvent } from '../../core/memory.js';
 import { DEFAULT_SETTINGS, FALLBACK_REPLIES, migrateSettings } from '../../core/config.js';
 import { mountControls } from '../../shared/controls.js';
 import { setPdfWorker } from '../../shared/extract.js';
+import { speakPrivately } from '../../shared/private-speech.js';
 import { isVoiceDownloaded, setupVoice, startVoice, synthesize } from './voice.js';
 
 /* global __FIREBASE_CONFIG__ */
@@ -144,9 +145,15 @@ isVoiceDownloaded().then(async (has) => {
     controls.refreshVoice();
   }
 });
+let localCtx = null;
+let localSrc = null;
 function playLocally(pcm16, rate) {
   const bin = atob(pcm16);
-  const ctx = new AudioContext();
+  localCtx ??= new AudioContext();
+  const ctx = localCtx;
+  try {
+    localSrc?.stop(); // a newer preview replaces the one playing
+  } catch {}
   const n = bin.length / 2;
   const buf = ctx.createBuffer(1, n, rate);
   const ch = buf.getChannelData(0);
@@ -155,6 +162,24 @@ function playLocally(pcm16, rate) {
   src.buffer = buf;
   src.connect(ctx.destination);
   src.start();
+  localSrc = src;
+}
+
+// "Hear the suggestions": local Piper voice if set up, otherwise a local
+// system voice. Plays on this computer only, never into the call.
+let previewSeq = 0;
+async function preview(text) {
+  const seq = ++previewSeq;
+  if (voiceReady) {
+    try {
+      const { pcm16, rate } = await synthesize(text);
+      if (seq === previewSeq) playLocally(pcm16, rate);
+      return;
+    } catch (e) {
+      console.warn('[Pipe Up] preview voice failed', e);
+    }
+  }
+  speakPrivately(text);
 }
 
 // ---------- Connection to the Meet tab ----------
@@ -200,6 +225,8 @@ async function onTabMessage(p, msg) {
       console.warn('[Pipe Up] voice failed', e);
       safePost(p, { type: 'speak-failed' });
     }
+  } else if (msg?.type === 'preview') {
+    preview(msg.text);
   } else if (msg?.type === 'event') {
     // "Don't learn" means the moment is not recorded at all.
     if (!settings.dontLearn) memory.add(makeEvent(msg.event)).then(() => controls.renderMemory());
