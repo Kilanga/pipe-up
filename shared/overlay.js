@@ -8,6 +8,8 @@ const CSS = `
   color: #f4f4f5; background: #18181b; border: 1px solid #3f3f46; border-radius: 14px;
   box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; }
 .pu.min .body { display: none; }
+.pu.inline { position: relative; right: auto; bottom: auto; width: 100%; max-width: 400px; box-sizing: border-box; z-index: auto; }
+.pu.inline .head { cursor: default; }
 .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #27272a; cursor: move; user-select: none; }
 .logo { font-weight: 700; letter-spacing: .2px; }
 .badge { font-size: .78em; padding: 2px 8px; border-radius: 999px; background: #3f3f46; color: #e4e4e7; white-space: nowrap; }
@@ -46,7 +48,8 @@ label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 [hidden] { display: none !important; }
 /* Display and reading options */
-.pu.easy { width: 380px; font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif;
+.pu.easy:not(.inline) { width: 380px; }
+.pu.easy { font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif;
   font-size: calc(15.5px * var(--scale, 1)); line-height: 1.7; letter-spacing: .04em; word-spacing: .12em; }
 .pu.easy .card { padding: 10px; }
 .pu.easy .tag, .pu.easy .muted, .pu.easy .badge, .pu.easy .chip, .pu.easy .notice { font-size: .9em; }
@@ -93,7 +96,7 @@ function el(tag, attrs = {}, ...children) {
  * @param {() => void} [cb.onRequest] "Suggest replies now" (on-demand mode)
  * @param {() => void} [cb.onOpenPanel]
  */
-export function createOverlay(cb, { mount = document.documentElement, position = null } = {}) {
+export function createOverlay(cb, { mount = document.documentElement, position = null, inline = false } = {}) {
   const host = el('div', { id: 'pipe-up-overlay' });
   const root = host.attachShadow({ mode: 'open' });
   root.append(el('style', {}, CSS));
@@ -176,7 +179,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   );
   root.append(panel);
   if (position) Object.assign(panel.style, position);
-  makeDraggable(panel, head);
+  // Inline (hosted demo): the panel sits in the page layout and never covers it.
+  if (inline) panel.classList.add('inline');
+  else makeDraggable(panel, head);
   renderOutput();
 
   function renderOutput() {
@@ -262,6 +267,11 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     state.selected = null;
     state.editingFrom = null;
     status.textContent = '';
+    if (state.route === 'thinking') {
+      state.route = 'idle';
+      badge.className = 'badge idle';
+      badge.textContent = ROUTE_LABEL.idle;
+    }
     renderCards();
     if (msg) flash(msg);
   }
@@ -278,6 +288,10 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   function focusIsNeutral() {
     const ae = document.activeElement;
     return !ae || ae === document.body || ae === document.documentElement || ae === host;
+  }
+  function inDialog() {
+    const ae = document.activeElement;
+    return Boolean(ae && ae !== host && ae.closest?.('[role=dialog],[role=menu],[role=listbox],[aria-modal=true]'));
   }
   function isTyping(e) {
     const t = (e.composedPath ? e.composedPath() : [e.target])[0];
@@ -321,21 +335,14 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       select(d - 1, { focus: true });
       return;
     }
-    // Enter, Tab and Escape could act on a focused Meet control: only when focus is neutral or ours.
-    if (!focusIsNeutral()) return;
     if (d === 4 && hasReplies) {
       e.preventDefault();
       e.stopPropagation();
       spoke();
-    } else if (e.key === 'Enter' && state.selected != null) {
-      e.preventDefault();
-      e.stopPropagation();
-      send({ text: state.replies[state.selected].text, action: 'picked', choice: state.selected + 1 });
-    } else if (e.key === 'Tab' && !e.shiftKey && state.selected != null) {
-      e.preventDefault();
-      editSelected();
-    } else if (e.key === 'Escape' && hasReplies) {
-      // Not stopped: Meet still sees Escape.
+      return;
+    }
+    // Escape is never stopped (Meet still sees it); it is left to dialogs and menus.
+    if (e.key === 'Escape' && hasReplies && !inDialog()) {
       if (state.selected != null) {
         state.selected = null;
         renderCards();
@@ -343,6 +350,17 @@ export function createOverlay(cb, { mount = document.documentElement, position =
         cb.onDismiss?.(info());
         clear();
       }
+      return;
+    }
+    // Enter and Tab would act on a focused Meet control: only when focus is neutral or ours.
+    if (!focusIsNeutral()) return;
+    if (e.key === 'Enter' && state.selected != null) {
+      e.preventDefault();
+      e.stopPropagation();
+      send({ text: state.replies[state.selected].text, action: 'picked', choice: state.selected + 1 });
+    } else if (e.key === 'Tab' && !e.shiftKey && state.selected != null) {
+      e.preventDefault();
+      editSelected();
     }
   }
   window.addEventListener('keydown', onKey, true);
@@ -404,6 +422,12 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       ask.hidden = s.suggestMode !== 'onDemand' || !cb.onRequest;
       panel.style.setProperty('--scale', s.textScale || 1);
       setKeysHint(Boolean(s.compact));
+      // Switching to one suggestion applies to the ones already on screen.
+      if (s.compact && state.replies.length > 1) {
+        state.replies = state.replies.slice(0, 1);
+        if (state.selected) state.selected = null;
+        renderCards();
+      }
       panel.classList.toggle('easy', Boolean(s.easyReading));
       panel.classList.toggle('contrast', Boolean(s.highContrast));
       panel.classList.toggle('still', Boolean(s.reduceMotion));

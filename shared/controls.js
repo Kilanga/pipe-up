@@ -327,7 +327,11 @@ export function mountControls(root, o) {
       : null,
     h('div', { class: 'row' }, h('button', { class: 'primary', onclick: saveSettings }, 'Save settings'), saved)
   );
+  // Typed but not yet saved: other setting changes must not overwrite it.
+  let formDirty = false;
+  for (const inp of [mode, myName, ...fillerInputs, disclosure, scale]) inp.addEventListener('input', () => (formDirty = true));
   async function saveSettings() {
+    formDirty = false;
     await o.settings.set({
       suggestMode: mode.value,
       myName: myName.value.trim(),
@@ -344,11 +348,13 @@ export function mountControls(root, o) {
     settingsCache = s;
     cloud.checked = Boolean(s.cloudConsent);
     shareBriefing.checked = Boolean(s.shareBriefingWithCloud);
-    mode.value = s.suggestMode || 'auto';
-    myName.value = s.myName || '';
-    fillerInputs.forEach((inp, i) => (inp.value = s.fillers?.[i] || ''));
-    disclosure.value = s.disclosure || '';
-    scale.value = String(s.textScale || 1);
+    if (!formDirty) {
+      mode.value = s.suggestMode || 'auto';
+      myName.value = s.myName || '';
+      fillerInputs.forEach((inp, i) => (inp.value = s.fillers?.[i] || ''));
+      disclosure.value = s.disclosure || '';
+      scale.value = String(s.textScale || 1);
+    }
     for (const [key, box] of Object.entries(displayBoxes)) box.checked = Boolean(s[key]);
     root.classList.toggle('pu-easy', Boolean(s.easyReading));
     root.classList.toggle('pu-contrast', Boolean(s.highContrast));

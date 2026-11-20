@@ -91,6 +91,7 @@ function onPanelMessage(msg) {
 
 function request(lines) {
   if (!port) {
+    if (!overlay.isEngaged()) overlay.clear(); // older suggestions do not answer this question
     overlay.notice('Open the Pipe Up side panel (⚙) to get suggestions.');
     return;
   }
@@ -156,7 +157,11 @@ const watcher = watchCaptions({
   onLine: (speaker, text) => overlay.setLine(speaker, text),
   onMissing: () => overlay.notice('Turn on captions in Meet (CC button) so Pipe Up can follow the conversation.'),
   onPause: (lines) => {
-    if (settings.suggestMode === 'onDemand') return; // waits for Alt+S
+    if (settings.suggestMode === 'onDemand') {
+      // Waits for Alt+S; suggestions for an older question are withdrawn.
+      if (!overlay.isEngaged()) overlay.clear();
+      return;
+    }
     request(lines);
   },
 });

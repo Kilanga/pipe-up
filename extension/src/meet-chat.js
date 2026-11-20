@@ -54,6 +54,8 @@ async function sendNow(text) {
     const box = await openChatBox();
     if (!box) throw new Error('chat box not found');
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    const draft = box.value; // a message the user was typing: put it back afterwards
+    const hadFocus = document.activeElement === box;
     box.focus();
     setter.call(box, text);
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -62,8 +64,16 @@ async function sendNow(text) {
     if (sendBtn && !sendBtn.disabled) sendBtn.click();
     else box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
     await sleep(200);
-    box.blur();
-    if (box.value.trim() === text.trim()) throw new Error('message not sent');
+    if (box.value.trim() === text.trim()) {
+      setter.call(box, draft);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      throw new Error('message not sent');
+    }
+    if (draft) {
+      setter.call(box, draft);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (!hadFocus) box.blur();
     return { ok: true };
   } catch (e) {
     try {

@@ -86,7 +86,7 @@ test/        unit tests (node --test)
 
 Without Gemini Nano, the extension offers basic replies only (its cloud path needs an App Check debug token): use the hosted demo to try the cloud path.
 
-**Measured** on a desktop with an RTX 4070 Ti, Chrome 157: first on-device suggestion about 1.2 s after the pause; first cloud call about 6 s.
+**Measured** on a desktop with an RTX 4070 Ti, Chrome 157: first on-device suggestion about 1.2 s after the pause; cloud calls about 4 to 7 s.
 
 **On-device requirements:** Chrome desktop 139+, about 22 GB free disk space, a GPU with more than 4 GB of VRAM. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and restart Chrome.
 

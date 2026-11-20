@@ -97,7 +97,7 @@ const overlay = createOverlay(
     onRequest: () => (history.length ? ask(history.slice(-3)) : overlay.notice('Start the call first.')),
     onHear: (text) => speakPrivately(text) || overlay.notice('No local voice in this browser to read the suggestions.'),
   },
-  { position: { right: '380px', bottom: '24px' } }
+  { mount: document.getElementById('overlay-slot'), inline: true }
 );
 overlay.setSettings(settings);
 overlay.setVoiceAvailable('speechSynthesis' in window);
@@ -166,6 +166,7 @@ function say(speaker, text) {
   document.querySelectorAll('.tile').forEach((t) => t.classList.toggle('speaking', t.dataset.name === speaker));
   overlay.setLine(speaker, text);
   if (settings.suggestMode === 'onDemand') {
+    if (!overlay.isEngaged()) overlay.clear(); // the old suggestions answered an older question
     scheduleAutoNext();
     return overlay.notice('Press Alt+S (or the button) when you want suggestions.');
   }
