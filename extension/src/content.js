@@ -1,7 +1,8 @@
 import { createOverlay } from '../../shared/overlay.js';
 import { watchCaptions, setMyName } from './meet-captions.js';
 import { sendToMeetChat } from './meet-chat.js';
-import { DEFAULT_SETTINGS } from '../../core/config.js';
+import { raiseHand } from './meet-hand.js';
+import { DEFAULT_SETTINGS, REMOTE_DEFAULTS } from '../../core/config.js';
 
 let settings = { ...DEFAULT_SETTINGS };
 let port = null; // to the side panel, which runs the AI
@@ -13,6 +14,8 @@ const unsent = []; // learning events kept while the side panel is closed
 const overlay = createOverlay({
   onSend: async ({ text, action, choice, shown, context }) => {
     log({ action, reply: text, choice, shown, context });
+    // Optional: "I'm still speaking" (the first quick phrase) also raises the hand.
+    if (action === 'filler' && settings.raiseHandOnHold && text === settings.fillers?.[0]) raiseHand();
     await deliver(text);
   },
   onSpoke: ({ shown, context }) => log({ action: 'spoke', reply: '', shown, context }),
@@ -73,6 +76,7 @@ function onPanelMessage(msg) {
     overlay.setVoiceAvailable(voiceReady);
     return;
   }
+  if (msg.type === 'timing') return watcher.setTiming(msg);
   if (msg.type === 'audio') return playInCall(msg);
   if (msg.type === 'speak-failed') {
     const text = lastSpoken;
@@ -85,7 +89,6 @@ function onPanelMessage(msg) {
   if (msg.type === 'result') {
     overlay.setSuggestions(msg.replies, msg.route, contexts.get(msg.id));
     if (msg.route === 'blocked') overlay.notice('On-device AI is not ready. Open the side panel (⚙) to set it up or allow the cloud.');
-    if (msg.pauseMs) watcher.setPause(msg.pauseMs);
   }
 }
 
@@ -152,11 +155,25 @@ async function fallbackToChat(text, why) {
 }
 
 // ---------- Captions ----------
+let early = false; // the side panel was told to start early on the current captions
 const watcher = watchCaptions({
-  pauseMs: 1200,
+  pauseMs: REMOTE_DEFAULTS.pause_ms,
+  earlyMs: 0, // off until the side panel sends the timing (it decides if Gemini Nano can start early)
   onLine: (speaker, text) => overlay.setLine(speaker, text),
   onMissing: () => overlay.notice('Turn on captions in Meet (CC button) so Pipe Up can follow the conversation.'),
+  // A short silence: the side panel may start generating on the device.
+  // Nothing is shown before the normal pause.
+  onEarly: (lines) => {
+    if (!port || settings.suggestMode === 'onDemand') return;
+    early = true;
+    port.postMessage({ type: 'speculate', lines });
+  },
+  onChange: () => {
+    if (early) port?.postMessage({ type: 'unspeculate' });
+    early = false;
+  },
   onPause: (lines) => {
+    early = false;
     if (settings.suggestMode === 'onDemand') {
       // Waits for Alt+S; suggestions for an older question are withdrawn.
       if (!overlay.isEngaged()) overlay.clear();

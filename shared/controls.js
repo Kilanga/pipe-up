@@ -1,7 +1,8 @@
 // Settings, briefing and memory screens. Used by the extension side panel
 // and by the hosted demo page.
 import { deviceStatus } from '../core/engine.js';
-import { buildBriefingIndex } from '../core/briefing.js';
+import { buildBriefingIndex, PREPARED_LIMITS } from '../core/briefing.js';
+import { planPreparation, PREP_LIMITS } from '../core/prepare.js';
 import { adoptionRate } from '../core/memory.js';
 import { extractText } from './extract.js';
 
@@ -95,6 +96,7 @@ export function mountControls(root, o) {
     onchange: (e) => {
       const eng = o.getEngine();
       if (eng) eng.forceCloud = e.target.checked;
+      updatePrepButtons();
     },
   });
   // Declared before put(panes.Live, ...), which calls voiceSection().
@@ -169,6 +171,7 @@ export function mountControls(root, o) {
     status.textContent = STATUS_TEXT[s] || s;
     setupBtn.hidden = !(s === 'downloadable' || s === 'downloading');
     tryCloud.hidden = s === 'available' || Boolean(settingsCache.cloudConsent);
+    updatePrepButtons();
     return s;
   }
   async function setup() {
@@ -210,7 +213,7 @@ export function mountControls(root, o) {
   });
   const briefInfo = h('p', { class: 'muted', role: 'status' });
   put(panes.Briefing, 
-    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Everything stays on this computer.'),
+    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Your briefing stays on this computer unless you decide otherwise, below or in the Live tab.'),
     h('label', { class: 'field' }, h('b', {}, 'My positions'), h('span', { class: 'muted' }, 'Always used first. One per line.'), positions),
     h('label', { class: 'field' }, h('b', {}, 'Write or paste your notes'), notes),
     h('div', { class: 'field' }, h('b', {}, 'Upload a document'), h('span', { class: 'muted' }, '.txt, .md or .pdf, read on this computer'), file, docName, docText),
@@ -218,22 +221,33 @@ export function mountControls(root, o) {
     briefInfo
   );
   let briefingDocName = '';
+  // Prepared answers ("Prepare for the call"): kept with the briefing.
+  let prepared = [];
   o.briefing.get().then((b) => {
     notes.value = b?.notes || '';
     positions.value = b?.positions || '';
     docText.value = b?.documentText || '';
     briefingDocName = b?.documentName || '';
     docName.textContent = briefingDocName || 'No document';
+    prepared = Array.isArray(b?.prepared) ? b.prepared.map((q) => ({ question: String(q?.question || ''), answer: String(q?.answer || '') })) : [];
+    renderPrepared();
     announce(b);
   });
   function announce(b) {
     const idx = buildBriefingIndex(b || {});
     o.onBriefing(idx);
-    briefInfo.textContent = idx.chunks.length || idx.positions.length ? `Active briefing: ${idx.positions.length} position(s), ${idx.chunks.length} excerpt(s).` : 'No active briefing.';
+    const has = idx.chunks.length || idx.positions.length;
+    const answers = idx.prepared.length ? `, ${idx.prepared.length} prepared answer(s)` : '';
+    briefInfo.textContent = has || idx.prepared.length ? `Active briefing: ${idx.positions.length} position(s), ${idx.chunks.length} excerpt(s)${answers}.` : 'No active briefing.';
+    // Preparing needs a saved briefing to read.
+    prepSection.hidden = !has && !prepared.length;
   }
-  async function saveBriefing() {
+  const formBriefing = () => {
     const name = file.files?.[0]?.name || briefingDocName;
-    const b = { notes: notes.value, positions: positions.value, documentText: docText.value, documentName: docText.value ? name : '' };
+    return { notes: notes.value, positions: positions.value, documentText: docText.value, documentName: docText.value ? name : '' };
+  };
+  async function saveBriefing() {
+    const b = { ...formBriefing(), prepared: prepared.filter((q) => q.question.trim() || q.answer.trim()) };
     briefingDocName = b.documentName;
     await o.briefing.set(b);
     announce(b);
@@ -243,8 +257,228 @@ export function mountControls(root, o) {
     file.value = '';
     briefingDocName = '';
     docName.textContent = 'No document';
+    // The prepared answers are part of the briefing: they go with it.
+    prepRun?.abort();
+    prepared = [];
+    closeConfirm();
+    prepStatus.textContent = '';
+    renderPrepared();
     await o.briefing.set({});
     announce({});
+  }
+
+  // ---------- Briefing: prepare for the call ----------
+  // Cloud before the call, device during the call: a cloud model may read
+  // the whole briefing once, after an explicit click; the answers it
+  // prepares are then used on this computer.
+  const nf = (n) => Number(n).toLocaleString('en-US');
+  const prepCloud = h('button', { class: 'primary', onclick: () => askPrepare('cloud', prepCloud) }, 'Prepare with the cloud');
+  const prepDevice = h('button', { onclick: () => askPrepare('device', prepDevice) }, 'Prepare on this computer');
+  const prepDeviceNote = h('p', { class: 'muted', id: 'pu-prep-device-note', hidden: true }, 'Preparing on this computer needs Gemini Nano (see the Live tab).');
+  const confirmText = h('div', { tabindex: '-1' });
+  const confirmGo = h('button', { class: 'primary' }, 'Continue');
+  const confirmBox = h(
+    'div',
+    { class: 'confirm', role: 'group', 'aria-label': 'Confirm the preparation', hidden: true },
+    confirmText,
+    h('div', { class: 'row' }, confirmGo, h('button', { onclick: () => closeConfirm(true) }, 'Cancel'))
+  );
+  const prepProgress = h('progress', { hidden: true, 'aria-label': 'Preparation progress' });
+  const prepStop = h('button', { hidden: true, onclick: () => prepRun?.abort() }, 'Stop');
+  const prepStatus = h('p', { class: 'muted', role: 'status' });
+  const prepHint = h('p', { hidden: true }, h('b', {}, 'Check and edit: these are your answers, in your words.'));
+  const prepList = h('ol', { class: 'qa', 'aria-label': 'Prepared questions and answers' });
+  const prepAdd = h('button', { onclick: addPrepared }, 'Add a question');
+  const prepSection = h(
+    'section',
+    { class: 'prep', 'aria-labelledby': 'pu-prep-title', hidden: true },
+    h('h2', { id: 'pu-prep-title', tabindex: '-1' }, 'Prepare for the call'),
+    h('p', {}, 'Turn your briefing into the questions you are likely to get, each with a short answer. During the call, Pipe Up uses them on this computer.'),
+    h('div', { class: 'row' }, prepCloud, prepDevice),
+    h(
+      'p',
+      { class: 'muted' },
+      `The cloud reads up to ${nf(PREP_LIMITS.cloudWords)} words in one request, after you confirm. This computer reads up to ${nf(PREP_LIMITS.devicePartWords * PREP_LIMITS.deviceParts)} words, part by part, and sends nothing.`
+    ),
+    prepDeviceNote,
+    confirmBox,
+    prepProgress,
+    h('div', { class: 'row' }, prepStop),
+    prepStatus,
+    prepHint,
+    prepList,
+    h('div', { class: 'row' }, prepAdd)
+  );
+  put(panes.Briefing, prepSection);
+
+  let prepRun = null; // AbortController of the preparation in progress
+  let confirmOrigin = null;
+
+  function updatePrepButtons() {
+    const nano = lastStatus === 'available' && !o.getEngine()?.forceCloud;
+    prepCloud.disabled = Boolean(prepRun);
+    prepDevice.disabled = Boolean(prepRun) || !nano;
+    prepDeviceNote.hidden = nano;
+    // The reason is tied to the button only while it applies.
+    if (nano) prepDevice.removeAttribute('aria-describedby');
+    else prepDevice.setAttribute('aria-describedby', prepDeviceNote.id);
+  }
+
+  function closeConfirm(backToButton = false) {
+    confirmBox.hidden = true;
+    if (backToButton) confirmOrigin?.focus();
+    confirmOrigin = null;
+  }
+
+  // One inline question before anything is sent or replaced. For the cloud
+  // this click is the consent for that single request: it does not turn on
+  // the standing cloud options of the Live tab.
+  function askPrepare(target, origin) {
+    const plan = planPreparation(formBriefing(), target);
+    if (!plan.parts.length) {
+      prepStatus.textContent = PREP_PROBLEMS.empty;
+      return;
+    }
+    // Remote Config kill switch: say so before asking to confirm anything.
+    if (target === 'cloud' && o.getEngine() && !o.getEngine().remote.cloud_enabled) {
+      prepStatus.textContent = PREP_PROBLEMS['cloud-off'];
+      return;
+    }
+    const lines = [];
+    if (target === 'cloud') {
+      lines.push(`This sends your briefing text (about ${nf(plan.words)} words) to the Gemini API through Firebase, once.`);
+      if (plan.shortened) lines.push(`Your briefing has about ${nf(plan.total)} words: only the first ${nf(plan.limit)} are sent.`);
+      lines.push('Nothing else is sent, and this does not turn on the cloud for the call.');
+    } else if (plan.shortened) {
+      lines.push(`Your briefing has about ${nf(plan.total)} words: Gemini Nano reads the first ${nf(plan.limit)} on this computer.`);
+    }
+    const kept = prepared.filter((q) => q.question.trim() || q.answer.trim()).length;
+    if (kept) lines.push(`This replaces the ${kept} prepared answer${kept === 1 ? '' : 's'} below.`);
+    if (!lines.length) return runPrepare(target, origin); // on this computer, nothing to lose: no question to ask
+    confirmText.replaceChildren(...lines.map((l) => h('p', {}, l)));
+    confirmGo.onclick = () => runPrepare(target, origin);
+    confirmOrigin = origin;
+    confirmBox.hidden = false;
+    // Focus goes to the explanation, not to "Continue": a held Enter key
+    // must not confirm by itself.
+    confirmText.focus();
+  }
+
+  const PREP_PROBLEMS = {
+    empty: 'Write your positions or notes first, then prepare.',
+    'cloud-off': 'The cloud is switched off for now. You can prepare on this computer.',
+    'no-device': 'Gemini Nano is not ready on this computer (see the Live tab).',
+    cancelled: 'Stopped. Nothing was changed.',
+  };
+
+  async function runPrepare(target, origin) {
+    closeConfirm();
+    const eng = o.getEngine();
+    if (!eng) {
+      prepStatus.textContent = 'Pipe Up is still starting. Try again in a moment.';
+      return;
+    }
+    prepRun = new AbortController();
+    updatePrepButtons();
+    prepProgress.removeAttribute('value'); // "working", until the parts are counted
+    prepProgress.hidden = prepStop.hidden = false;
+    prepStop.focus();
+    prepStatus.textContent = target === 'cloud' ? 'Sending your briefing to the cloud…' : 'Reading your briefing on this computer…';
+    const t0 = performance.now();
+    let focusNext = origin; // where the focus goes when "Stop" disappears
+    try {
+      await saveBriefing(); // what is prepared is the briefing as saved
+      const res = await eng.prepare(await o.briefing.get(), {
+        target,
+        signal: prepRun.signal,
+        onProgress: (done, total) => {
+          prepProgress.max = total;
+          prepProgress.value = done;
+          if (target === 'device' && done < total) prepStatus.textContent = `Reading your briefing on this computer: part ${done + 1} of ${total}…`;
+        },
+      });
+      reportPreparation(res, target);
+      if (!res.items.length) {
+        prepStatus.textContent = 'No likely question was found in your briefing. Add a few details and try again.';
+        return;
+      }
+      prepared = res.items.map((q) => ({ ...q }));
+      await storePrepared();
+      renderPrepared();
+      const n = res.items.length;
+      const where = res.route === 'in_cloud' ? 'with the cloud' : target === 'cloud' ? 'on this computer, because the cloud request failed' : 'on this computer';
+      prepStatus.textContent = [
+        `${n} question${n === 1 ? '' : 's'} prepared ${where}.`,
+        res.dropped ? `${res.dropped} answer${res.dropped === 1 ? ' was' : 's were'} left out: a number in ${res.dropped === 1 ? 'it' : 'them'} is not in your briefing.` : '',
+        res.shortened ? `Your briefing was shortened to its first ${nf(res.words)} words.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      focusNext = prepList.querySelector('input') || origin; // on to the review
+    } catch (e) {
+      // The SDK puts the whole request address in its message: keep the cause.
+      const why = String(e?.message || e).replace(/^.*Error fetching from \S+\s*/, '').slice(0, 160);
+      let help = '';
+      if (target === 'cloud') {
+        // The extension reaches the cloud only with an App Check token.
+        help = o.debugToken && !o.debugToken.get() ? ' In this extension the cloud needs an App Check token (Settings tab).' : '';
+        help += ' You can prepare on this computer if Gemini Nano is ready.';
+      }
+      prepStatus.textContent = PREP_PROBLEMS[e?.code] || `The preparation did not work (${why}).${help}`;
+      if (e?.code !== 'cancelled' && e?.code !== 'empty') {
+        reportPreparation({ route: 'blocked', items: [], ms: Math.round(performance.now() - t0), problem: PREP_PROBLEMS[e?.code] || why }, target);
+      }
+    } finally {
+      prepRun = null;
+      prepProgress.hidden = prepStop.hidden = true;
+      updatePrepButtons(); // the buttons are usable again before one takes the focus
+      focusNext.focus();
+    }
+  }
+
+  // Saved at once, on this computer, with the briefing. The list on screen is
+  // not rebuilt here, so the field being edited keeps the focus.
+  async function storePrepared() {
+    const b = { ...(await o.briefing.get()), prepared: prepared.filter((q) => q.question.trim() || q.answer.trim()) };
+    await o.briefing.set(b);
+    announce(b);
+  }
+
+  function renderPrepared() {
+    prepHint.hidden = !prepared.length;
+    prepAdd.hidden = prepared.length >= PREPARED_LIMITS.max;
+    prepList.replaceChildren(
+      ...prepared.map((q, i) => {
+        const edit = (key) => (e) => {
+          q[key] = e.target.value;
+        };
+        const question = h('input', { type: 'text', value: q.question, maxlength: String(PREPARED_LIMITS.questionChars), oninput: edit('question'), onchange: storePrepared });
+        const answer = h('textarea', { rows: 2, maxlength: String(PREPARED_LIMITS.answerChars), oninput: edit('answer'), onchange: storePrepared }, q.answer);
+        return h(
+          'li',
+          {},
+          h('label', { class: 'field' }, h('span', { class: 'muted' }, `Question ${i + 1}`), question),
+          h('label', { class: 'field' }, h('span', { class: 'muted' }, 'My answer'), answer),
+          h('button', { class: 'link', 'aria-label': `Delete question ${i + 1}`, onclick: () => deletePrepared(i) }, 'Delete')
+        );
+      })
+    );
+  }
+
+  function addPrepared() {
+    prepared.push({ question: '', answer: '' });
+    renderPrepared();
+    prepSection.hidden = false;
+    prepList.lastElementChild.querySelector('input').focus();
+  }
+
+  async function deletePrepared(i) {
+    prepared.splice(i, 1);
+    renderPrepared();
+    // Focus stays in the list: the next question, or "Add a question".
+    (prepList.children[Math.min(i, prepared.length - 1)]?.querySelector('input') || prepAdd).focus();
+    await storePrepared();
+    prepStatus.textContent = `Deleted. ${prepared.length} prepared answer${prepared.length === 1 ? '' : 's'} left.`;
   }
 
   // ---------- Memory ----------
@@ -289,6 +523,7 @@ export function mountControls(root, o) {
   const mode = h('select', {}, h('option', { value: 'auto' }, 'After each pause'), h('option', { value: 'onDemand' }, 'Only when I ask (Alt+S)'));
   const myName = h('input', { type: 'text', placeholder: 'e.g. Sam Taylor', autocomplete: 'off' });
   const fillerInputs = [0, 1, 2].map(() => h('input', { type: 'text' }));
+  const raiseHandBox = h('input', { type: 'checkbox', onchange: (e) => o.settings.set({ raiseHandOnHold: e.target.checked }) });
   const disclosure = h('input', { type: 'text', placeholder: 'e.g. I stutter. Sometimes I answer in the chat, or a computer voice reads my reply.' });
   const scale = h('select', {}, ...[['1', 'Normal'], ['1.15', 'Large'], ['1.3', 'Extra large']].map(([v, l]) => h('option', { value: v }, l)));
   const token = h('input', { type: 'password', placeholder: 'App Check debug token (optional)', autocomplete: 'off' });
@@ -311,6 +546,15 @@ export function mountControls(root, o) {
     h('h2', {}, 'Quick phrases'),
     h('p', { class: 'muted' }, 'Sent at once with a click or Alt+1, Alt+2, Alt+3. The first one holds the floor while you speak.'),
     ...fillerInputs.map((inp, i) => h('label', { class: 'field' }, `Phrase ${i + 1}`, inp)),
+    // Meet only: the demo call has no raise-hand button.
+    o.demo
+      ? null
+      : h(
+          'label',
+          { class: 'check' },
+          raiseHandBox,
+          h('span', {}, h('b', {}, 'Also raise my hand in Meet when I send "I\'m still speaking". '), 'Applies to your first quick phrase (Alt+1). Others see your hand raised, as when you click Meet\'s own button. Off by default.')
+        ),
     h('label', { class: 'field' }, 'Tell others, if you want to (Alt+D)', h('span', { class: 'muted' }, 'Optional and empty by default: your words, your choice.'), disclosure),
     h('label', { class: 'field' }, 'Text size', scale),
     h('h2', {}, 'Display and reading'),
@@ -356,6 +600,7 @@ export function mountControls(root, o) {
       scale.value = String(s.textScale || 1);
     }
     for (const [key, box] of Object.entries(displayBoxes)) box.checked = Boolean(s[key]);
+    raiseHandBox.checked = Boolean(s.raiseHandOnHold);
     root.classList.toggle('pu-easy', Boolean(s.easyReading));
     root.classList.toggle('pu-contrast', Boolean(s.highContrast));
     root.classList.toggle('pu-still', Boolean(s.reduceMotion));
@@ -373,17 +618,42 @@ export function mountControls(root, o) {
       connection.className = 'connection' + (on ? ' on' : '');
     },
     reportRun(res) {
-      const item = h(
-        'li',
-        {},
-        h('span', { class: 'route ' + res.route }, ROUTE_TEXT[res.route] || res.route),
-        ` ${res.ms} ms · ${new Date().toLocaleTimeString()}`,
-        h('div', { class: 'muted' }, res.reason + (res.hasBriefing ? ' · used your briefing' : ''))
-      );
-      log.prepend(item);
-      while (log.children.length > 10) log.lastChild.remove();
+      const used = res.usedPrepared ? ' · used your prepared answer' : res.hasBriefing ? ' · used your briefing' : '';
+      addLog(res.route, ` ${res.ms} ms${res.headStartMs ? ` (started ${res.headStartMs} ms before the pause)` : ''}`, res.reason + used);
       if (current === 'Memory') renderMemory();
+    },
+    /** Opens the Briefing tab on "Prepare for the call". False when there is no briefing yet. */
+    showPrepare() {
+      show('Briefing');
+      if (prepSection.hidden) return false;
+      prepSection.scrollIntoView({ block: 'start' });
+      (prepCloud.disabled ? prepSection.querySelector('h2') : prepCloud).focus();
+      return true;
     },
     renderMemory,
   };
+
+  // One line of the "Where suggestions were generated" log.
+  function addLog(route, what, detail) {
+    const item = h(
+      'li',
+      {},
+      h('span', { class: 'route ' + route }, ROUTE_TEXT[route] || route),
+      `${what} · ${new Date().toLocaleTimeString()}`,
+      h('div', { class: 'muted' }, detail)
+    );
+    log.prepend(item);
+    while (log.children.length > 10) log.lastChild.remove();
+  }
+
+  // A preparation is logged like a suggestion, with the route Firebase AI
+  // Logic really took (inferenceSource), e.g. "Cloud · preparation · 5 Q&A · 3.2 s".
+  function reportPreparation(res, target) {
+    const mode = target === 'cloud' ? 'PREFER_IN_CLOUD' : 'ONLY_ON_DEVICE';
+    let detail = res.problem;
+    if (res.route === 'in_cloud') detail = `Your briefing text (${nf(res.words)} words) was sent once to the Gemini API through Firebase`;
+    else if (res.route === 'on_device' && target === 'cloud') detail = 'The cloud request failed, so Gemini Nano did it on this computer';
+    else if (res.route === 'on_device') detail = `Gemini Nano read your briefing on this computer (${res.parts} part${res.parts === 1 ? '' : 's'}); nothing was sent`;
+    addLog(res.route, ` · preparation · ${res.items.length} Q&A · ${(res.ms / 1000).toFixed(1)} s`, `${detail} (${mode})`);
+  }
 }

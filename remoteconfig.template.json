@@ -2,6 +2,7 @@
   "parameters": {
     "prompt_version": { "defaultValue": { "value": "1" }, "description": "Prompt variant: 1 plain, 2 warm, 3 professional", "valueType": "STRING" },
     "pause_ms": { "defaultValue": { "value": "1200" }, "description": "Silence in the captions (ms) before suggesting", "valueType": "NUMBER" },
+    "speculate_ms": { "defaultValue": { "value": "500" }, "description": "On-device only: silence (ms) before generating early; shown at pause_ms if the captions did not change. 0 = off", "valueType": "NUMBER" },
     "max_words": { "defaultValue": { "value": "12" }, "description": "Maximum words per suggestion", "valueType": "NUMBER" },
     "examples_k": { "defaultValue": { "value": "3" }, "description": "Past replies used as style examples", "valueType": "NUMBER" },
     "briefing_chunks": { "defaultValue": { "value": "2" }, "description": "Briefing excerpts added to the prompt", "valueType": "NUMBER" },

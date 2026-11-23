@@ -45,23 +45,62 @@ export function splitPositions(text) {
     .slice(0, 8);
 }
 
+// Prepared answers ("Prepare for the call"): up to 6 come from a model, the
+// user can edit them and add their own.
+export const PREPARED_LIMITS = { max: 12, questionChars: 200, answerChars: 300 };
+
+/** The prepared answers that can be used: both fields filled, bounded. */
+export function cleanPrepared(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((q) => ({
+      question: String(q?.question || '').replace(/\s+/g, ' ').trim().slice(0, PREPARED_LIMITS.questionChars),
+      answer: String(q?.answer || '').replace(/\s+/g, ' ').trim().slice(0, PREPARED_LIMITS.answerChars),
+    }))
+    .filter((q) => q.question && q.answer)
+    .slice(0, PREPARED_LIMITS.max);
+}
+
 /**
- * @param {{notes?:string, documentText?:string, documentName?:string, positions?:string}} b
+ * @param {{notes?:string, documentText?:string, documentName?:string, positions?:string, prepared?:Array<{question:string,answer:string}>}} b
  */
 export function buildBriefingIndex(b = {}) {
   const chunks = [
     ...chunkText(b.notes, 'notes'),
     ...chunkText(b.documentText, b.documentName ? `doc:${b.documentName}` : 'doc'),
   ];
-  return { chunks, positions: splitPositions(b.positions) };
+  return { chunks, positions: splitPositions(b.positions), prepared: cleanPrepared(b.prepared) };
+}
+
+/**
+ * The prepared answer whose question is close to what was just said, if any.
+ * Same lexical ranking as the rest of the briefing, with a higher bar: a
+ * prepared answer is offered almost as it is, so the match must be clear.
+ */
+export function matchPrepared(prepared, utterance, minScore = 0.3) {
+  if (!prepared?.length) return null;
+  const docs = prepared.map((q, id) => ({ id, text: q.question }));
+  // A caption block can hold a whole turn ("Morning everyone. Sam, can you
+  // …?"): the question is one of its last sentences, so each is tried too.
+  const sentences = String(utterance || '').split(/(?<=[.!?…])\s+/).filter(Boolean).slice(-3);
+  let best = null;
+  for (const text of new Set([utterance, ...sentences])) {
+    const top = rank(text, docs)[0];
+    if (top && (!best || top.score > best.score)) best = top;
+  }
+  return best && best.score >= minScore ? prepared[best.id] : null;
 }
 
 /**
  * Picks the briefing material relevant to what was just said.
- * Positions that match are always included first.
+ * Positions that match are always included first. A matching prepared
+ * answer takes the place of one excerpt, so the prompt does not grow.
  */
 export function retrieveBriefing(index, utterance, { maxChunks = 2, maxPositions = 3, minScore = 0.08 } = {}) {
-  if (!index) return { chunks: [], positions: [] };
+  if (!index) return { chunks: [], positions: [], prepared: [] };
+  const match = matchPrepared(index.prepared, utterance);
+  const prepared = match ? [match] : [];
+  maxChunks = Math.max(0, maxChunks - prepared.length);
   const posDocs = index.positions.map((text, i) => ({ id: i, text }));
   const positions = rank(utterance, posDocs)
     .filter((r) => r.score >= minScore)
@@ -72,5 +111,5 @@ export function retrieveBriefing(index, utterance, { maxChunks = 2, maxPositions
     .filter((r) => r.score >= minScore)
     .slice(0, maxChunks)
     .map((r) => byId.get(r.id));
-  return { chunks, positions };
+  return { chunks, positions, prepared };
 }

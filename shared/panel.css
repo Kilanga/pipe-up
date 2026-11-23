@@ -46,6 +46,14 @@ progress { width: 100%; }
 @media (prefers-color-scheme: dark) {
   .route.on_device { color: #86efac; } .route.in_cloud { color: #93c5fd; } .route.fallback, .route.blocked { color: #fcd34d; }
 }
+.prep { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.confirm { border: 2px solid var(--accent); border-radius: 8px; padding: 10px; display: grid; gap: 8px; background: var(--soft); }
+.confirm > div:first-child { display: grid; gap: 6px; }
+.qa { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.qa li { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 6px; justify-items: start; }
+.qa .field { width: 100%; }
+.qa textarea { resize: vertical; }
+button:disabled { opacity: .55; cursor: not-allowed; }
 
 /* Display and reading options (side panel) */
 .pu-easy { font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif; font-size: 15.5px; line-height: 1.7; letter-spacing: .04em; word-spacing: .12em; }

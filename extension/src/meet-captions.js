@@ -1,6 +1,7 @@
 // Reads the live captions Google Meet already shows on screen.
 // Meet's class names are obfuscated and change often, so this relies on
 // accessible landmarks and text structure, all kept in this one file.
+import { createPauseTimer } from '../../core/pause.js';
 
 // Label of the captions region in Meet's main UI languages.
 const REGION_LABELS = [
@@ -62,24 +63,40 @@ export function recentLines(blocks) {
  * Watches the captions and calls onPause(lines) once nobody has added text
  * for `pauseMs`, when the last line is someone else's. Calls
  * onSelfSpeaking() while the user's own captions are moving.
+ * With `earlyMs`, onEarly(lines) is called after that shorter silence, so
+ * an on-device request can start before the pause; onChange() tells that
+ * the captions moved again.
  */
-export function watchCaptions({ pauseMs = 1200, onPause, onSelfSpeaking, onLine, onMissing, onFound }) {
+export function watchCaptions({ pauseMs = 1200, earlyMs = 0, onPause, onEarly, onChange, onSelfSpeaking, onLine, onMissing, onFound }) {
   let region = null;
   let observer = null;
-  let timer = null;
   let lastKey = '';
   let missingReported = false;
 
-  const flush = () => {
+  // The blocks to answer: someone else spoke last and it was not answered yet.
+  const fresh = () => {
     const blocks = readBlocks(region);
-    if (!blocks.length) return;
     const last = blocks.at(-1);
-    if (last.self) return; // the user is talking: no suggestions
+    if (!last || last.self) return null; // the user is talking: no suggestions
     const key = last.speaker + '|' + last.text;
-    if (key === lastKey) return;
-    lastKey = key;
-    onPause(recentLines(blocks));
+    return key === lastKey ? null : { blocks, key };
   };
+
+  const timer = createPauseTimer({
+    pauseMs,
+    earlyMs,
+    onChange,
+    onEarly: () => {
+      const f = fresh();
+      if (f) onEarly?.(recentLines(f.blocks));
+    },
+    onPause: () => {
+      const f = fresh();
+      if (!f) return;
+      lastKey = f.key;
+      onPause(recentLines(f.blocks));
+    },
+  });
 
   const onMutate = () => {
     const last = readBlocks(region).at(-1);
@@ -87,8 +104,7 @@ export function watchCaptions({ pauseMs = 1200, onPause, onSelfSpeaking, onLine,
       if (last.self) onSelfSpeaking?.();
       else onLine?.(last.speaker, last.text);
     }
-    clearTimeout(timer);
-    timer = setTimeout(flush, pauseMs);
+    timer.touch();
   };
 
   const attach = () => {
@@ -110,16 +126,15 @@ export function watchCaptions({ pauseMs = 1200, onPause, onSelfSpeaking, onLine,
   attach();
   const poll = setInterval(attach, 2000);
   return {
-    setPause(ms) {
-      pauseMs = ms;
-    },
+    /** Timing from Remote Config, sent by the side panel. */
+    setTiming: (t) => timer.set(t),
     /** For on-demand mode: the conversation as it stands now. */
     current() {
       return recentLines(readBlocks(region));
     },
     stop() {
       clearInterval(poll);
-      clearTimeout(timer);
+      timer.stop();
       observer?.disconnect();
     },
   };

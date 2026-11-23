@@ -3,7 +3,9 @@
 import { ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { initFirebase, SuggestionEngine, deviceStatus } from '../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../core/memory.js';
-import { DEFAULT_SETTINGS, migrateSettings } from '../core/config.js';
+import { migrateSettings } from '../core/config.js';
+import { SuggestionRunner } from '../core/runner.js';
+import { createPauseTimer } from '../core/pause.js';
 import { speakPrivately } from '../shared/private-speech.js';
 import { createOverlay } from '../shared/overlay.js';
 import { mountControls } from '../shared/controls.js';
@@ -142,14 +144,32 @@ async function updateBanner() {
 document.getElementById('try-cloud').addEventListener('click', () => settingsStore.set({ cloudConsent: true, shareBriefingWithCloud: true }));
 updateBanner();
 
-// ---- simulated captions and one request at a time ----
+// ---- simulated captions; one request at a time, as in the extension ----
 const captions = document.getElementById('captions');
 const history = [];
 let step = 0;
 let timer = null;
 let requestId = 0;
-let busy = false;
-let pending = null;
+
+const runner = new SuggestionRunner({
+  getEngine: () => engineReady,
+  peekEngine: () => engine,
+  onPartial: (job, replies) => job.id === requestId && overlay.setPartial(replies),
+  onResult: (job, res) => {
+    if (job.id !== requestId) return; // a newer line arrived meanwhile
+    overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
+    scheduleAutoNext();
+    if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Use "Try with the cloud" above to continue.');
+    if (res.error) console.warn('[Pipe Up]', res.error);
+  },
+  onLog: (res) => controls.reportRun(res),
+});
+// Simulates Meet's pause detection, with the same early start on the device.
+const pause = createPauseTimer({
+  onEarly: () => runner.speculate(history.slice(-3)),
+  onChange: () => runner.cancelEarly(),
+  onPause: () => ask(history.slice(-3)),
+});
 
 function say(speaker, text) {
   history.push({ speaker, text });
@@ -166,41 +186,19 @@ function say(speaker, text) {
   document.querySelectorAll('.tile').forEach((t) => t.classList.toggle('speaking', t.dataset.name === speaker));
   overlay.setLine(speaker, text);
   if (settings.suggestMode === 'onDemand') {
+    pause.stop();
     if (!overlay.isEngaged()) overlay.clear(); // the old suggestions answered an older question
     scheduleAutoNext();
     return overlay.notice('Press Alt+S (or the button) when you want suggestions.');
   }
-  // Simulates Meet's pause detection.
-  setTimeout(() => ask(history.slice(-3)), Number(engine?.remote.pause_ms) || 1200);
+  pause.set({ pauseMs: engine?.remote.pause_ms, earlyMs: engine?.remote.speculate_ms });
+  pause.touch();
 }
 
 function ask(lines) {
   const id = ++requestId;
   overlay.setThinking(lines.at(-1)?.text);
-  pending = { id, lines };
-  if (!busy) drain();
-}
-
-async function drain() {
-  busy = true;
-  try {
-    while (pending) {
-      const job = pending;
-      pending = null;
-      if (!engine) await engineReady;
-      const res = await engine.suggest(job.lines, {
-        onPartial: (r) => job.id === requestId && overlay.setPartial(r),
-      });
-      controls.reportRun(res);
-      if (job.id !== requestId) continue; // a newer line arrived meanwhile
-      overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
-      scheduleAutoNext();
-      if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Use "Try with the cloud" above to continue.');
-      if (res.error) console.warn('[Pipe Up]', res.error);
-    }
-  } finally {
-    busy = false;
-  }
+  runner.request({ id, lines });
 }
 
 const nextBtn = document.getElementById('next');
@@ -226,7 +224,7 @@ function scheduleAutoNext(delay = 8000) {
   clearTimeout(timer);
   timer = setTimeout(() => {
     if (!autoOn) return;
-    if (overlay.isEngaged() || busy) return scheduleAutoNext(2000);
+    if (overlay.isEngaged() || runner.busy) return scheduleAutoNext(2000);
     if (step >= SCRIPT.length) return setAuto(false);
     nextBtn.click();
   }, delay);
@@ -248,6 +246,12 @@ if (briefingCache?.positions || briefingCache?.docs?.length) sampleBtn.textConte
 sampleBtn.addEventListener('click', async () => {
   await briefingStore.set(SAMPLE_BRIEFING);
   location.reload();
+});
+
+// Step 2 of the demo: opens "Prepare for the call" in the Briefing tab. The
+// confirmation that sends the briefing to the cloud stays there, in full.
+document.getElementById('prep').addEventListener('click', () => {
+  if (!controls.showPrepare()) overlay.notice("Load Sam's sample briefing first (step 1), or save your own in the Briefing tab.");
 });
 
 const engineReady = initFirebase({
