@@ -37,7 +37,10 @@ export async function initFirebase({ firebaseConfig, appCheck = {} }) {
     for (const key of Object.keys(REMOTE_DEFAULTS)) {
       const v = getValue(rc, key);
       const def = REMOTE_DEFAULTS[key];
-      remote[key] = typeof def === 'number' ? v.asNumber() || def : typeof def === 'boolean' ? v.asBoolean() : v.asString() || def;
+      // A number may be 0 (speculate_ms: 0 turns the early start off); an
+      // empty or non-numeric value falls back to the bundled default.
+      const num = v.asString().trim() === '' ? NaN : Number(v.asString());
+      remote[key] = typeof def === 'number' ? (Number.isFinite(num) ? num : def) : typeof def === 'boolean' ? v.asBoolean() : v.asString() || def;
     }
   } catch (e) {
     console.warn('[Pipe Up] Remote Config unavailable, using bundled defaults', e);
@@ -66,19 +69,30 @@ const STATUS_WORDS = {
   downloading: 'still downloading',
 };
 
+const abortError = () => new DOMException('The request was cancelled', 'AbortError');
+const isAbort = (e, signal) => Boolean(signal?.aborted) || e?.name === 'AbortError';
+
 export class SuggestionEngine {
+  #deviceReady = false; // Gemini Nano answered "available": not asked again until an error
+  #tails = {}; // last on-device call per model family, see #onDevice
+
   /**
    * @param {object} o
    * @param {{ai:any, remote:object}} o.firebase
    * @param {import('./memory.js').MemoryStore} o.memory
    * @param {() => any} o.getBriefing returns the current briefing index
    * @param {() => {cloudConsent:boolean, dontLearn:boolean, shareBriefingWithCloud?:boolean}} o.getSettings
+   * @param {(params:object) => any} [o.createModel] tests pass a fake model factory, so the
+   *        routing logic runs without Firebase or Gemini Nano
+   * @param {() => Promise<string>} [o.getDeviceStatus] same, for Chrome's model status
    */
-  constructor({ firebase, memory, getBriefing, getSettings }) {
+  constructor({ firebase, memory, getBriefing, getSettings, createModel, getDeviceStatus = deviceStatus }) {
     this.firebase = firebase;
     this.memory = memory;
     this.getBriefing = getBriefing;
     this.getSettings = getSettings;
+    this.createModel = createModel || ((params) => getGenerativeModel(firebase.ai, params));
+    this.getDeviceStatus = getDeviceStatus;
     this.remote = firebase.remote;
     this.forceCloud = false; // demo switch: simulates a computer without Gemini Nano
     this.maxWords = this.#wantedMaxWords();
@@ -92,7 +106,6 @@ export class SuggestionEngine {
   }
 
   #buildModels() {
-    const { ai } = this.firebase;
     const rules = systemRules({ maxWords: this.maxWords, variant: String(this.remote.prompt_version || '1') });
     const onDeviceParams = {
       createOptions: {
@@ -113,14 +126,15 @@ export class SuggestionEngine {
         maxOutputTokens: 256,
       },
     };
-    // Three Firebase AI Logic hybrid modes:
+    this.onDeviceParams = onDeviceParams;
+    // Three Firebase AI Logic hybrid modes for the live call:
     // - ONLY_ON_DEVICE: the default, nothing leaves the computer;
     // - PREFER_ON_DEVICE: after consent, the SDK picks the cloud when the
     //   device cannot run Gemini Nano;
     // - ONLY_IN_CLOUD: after consent, when Nano is present but failed.
-    this.deviceModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams, inCloudParams });
-    this.hybridModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE, onDeviceParams, inCloudParams });
-    this.cloudModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
+    this.deviceModel = this.createModel({ mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams, inCloudParams });
+    this.hybridModel = this.createModel({ mode: InferenceMode.PREFER_ON_DEVICE, onDeviceParams, inCloudParams });
+    this.cloudModel = this.createModel({ mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
   }
 
   /** Must be called from a click: may download Gemini Nano. */
@@ -129,16 +143,57 @@ export class SuggestionEngine {
   }
 
   /**
+   * Chrome's status for Gemini Nano. Asked once per request before; now the
+   * answer "available" is kept until a device call fails.
+   */
+  async #status() {
+    if (this.forceCloud) return 'unavailable';
+    if (this.#deviceReady) return 'available';
+    const status = await this.getDeviceStatus();
+    this.#deviceReady = status === 'available';
+    return status;
+  }
+
+  /** True when the next request is known to run on Gemini Nano. */
+  get deviceReady() {
+    return this.#deviceReady && !this.forceCloud;
+  }
+
+  /**
+   * Runs one call that may use Gemini Nano, with a way to cancel it.
+   * The SDK hands `promptOptions` to Gemini Nano and keeps the params object
+   * we gave it, so the signal placed there is the one the prompt listens to.
+   * It reads it late (after creating a session), so calls of one family run
+   * strictly one after the other: a cancelled call ends before the next one
+   * places its own signal.
+   */
+  async #onDevice(family, params, signal, call) {
+    const before = this.#tails[family];
+    let release;
+    this.#tails[family] = new Promise((r) => (release = r));
+    try {
+      await before;
+      if (signal?.aborted) throw abortError();
+      params.promptOptions = { ...params.promptOptions, signal };
+      return await call();
+    } finally {
+      release();
+    }
+  }
+
+  /**
    * Loads Gemini Nano into memory before the first real question, so the
    * first suggestion takes seconds instead of ~20 s. Never uses the cloud.
    */
   async warmUp() {
-    if (this.warmed || (await deviceStatus()) !== 'available') return;
+    if (this.warmed || (await this.#status()) !== 'available') return;
     this.warmed = true;
+    const prompt = buildPrompt({ lines: [{ speaker: 'Other person', text: 'Hello, can you hear me?' }] });
     try {
-      await this.deviceModel.generateContent(buildPrompt({ lines: [{ speaker: 'Other person', text: 'Hello, can you hear me?' }] }));
+      await this.#onDevice('suggest', this.onDeviceParams, undefined, () => this.deviceModel.generateContent(prompt));
     } catch {
       this.warmed = false;
+      this.#deviceReady = false;
     }
   }
 
@@ -147,31 +202,41 @@ export class SuggestionEngine {
   }
 
   /** Streams one request and returns the parsed replies and the real route. */
-  async #run(model, prompt, { hasBriefing, onPartial }) {
-    const { stream, response } = await model.generateContentStream(prompt);
-    let buf = '';
-    let shown = 0;
-    for await (const chunk of stream) {
-      buf += chunk.text();
-      const partial = partialReplies(buf);
-      if (onPartial && partial.length > shown) {
-        shown = partial.length;
-        onPartial(partial);
+  async #run(model, prompt, { hasBriefing, onPartial, signal, mayUseDevice }) {
+    const stream = async () => {
+      // Cloud requests are cancelled through the request options.
+      const { stream, response } = await model.generateContentStream(prompt, signal ? { signal } : undefined);
+      // A cancelled stream also rejects `response`: the loop below reports it.
+      response.catch(() => {});
+      let buf = '';
+      let shown = 0;
+      for await (const chunk of stream) {
+        buf += chunk.text();
+        const partial = partialReplies(buf);
+        if (onPartial && partial.length > shown) {
+          shown = partial.length;
+          onPartial(partial);
+        }
       }
-    }
-    const final = await response;
-    return {
-      replies: parseReplies(buf, { maxWords: this.maxWords, hasBriefing }),
-      route: final.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device',
+      if (signal?.aborted) throw abortError();
+      const final = await response;
+      return {
+        replies: parseReplies(buf, { maxWords: this.maxWords, hasBriefing }),
+        route: final.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device',
+      };
     };
+    return mayUseDevice ? this.#onDevice('suggest', this.onDeviceParams, signal, stream) : stream();
   }
 
   /**
    * @param {Array<{speaker?:string,text:string}>} lines recent captions, last = what was just said
-   * @param {{onPartial?: (replies:Array<{text:string,source:string}>) => void}} [opts]
-   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:string, reason:string, ms:number, hasBriefing:boolean, error?:string}>}
+   * @param {object} [opts]
+   * @param {(replies:Array<{text:string,source:string}>) => void} [opts.onPartial]
+   * @param {AbortSignal} [opts.signal] cancels the request, on device and in the cloud
+   * @param {boolean} [opts.deviceOnly] early start: Gemini Nano or nothing, never the cloud
+   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:string, reason:string, ms:number, hasBriefing:boolean, error?:string, cancelled?:boolean, unavailable?:boolean}>}
    */
-  async suggest(lines, { onPartial } = {}) {
+  async suggest(lines, { onPartial, signal, deviceOnly = false } = {}) {
     const t0 = performance.now();
     const utterance = lines.at(-1)?.text || '';
     const settings = this.getSettings();
@@ -180,9 +245,6 @@ export class SuggestionEngine {
       this.maxWords = wanted;
       this.#buildModels();
     }
-    const events = settings.dontLearn ? [] : await this.memory.all();
-    const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
-    const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length);
     const done = (replies, route, reason, usedBriefing, error) => ({
       replies,
       route,
@@ -191,8 +253,16 @@ export class SuggestionEngine {
       hasBriefing: Boolean(usedBriefing),
       error,
     });
+    // A cancelled request is a normal outcome, not an error: nothing is
+    // shown and nothing falls back to the cloud because of it.
+    const cancelled = () => ({ ...done([], 'cancelled', 'Replaced by a newer question', false), cancelled: true });
 
-    const status = this.forceCloud ? 'unavailable' : await deviceStatus();
+    const events = settings.dontLearn ? [] : await this.memory.all();
+    const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
+    const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length);
+
+    const status = await this.#status();
+    if (signal?.aborted) return cancelled();
     let deviceProblem = `Gemini Nano ${STATUS_WORDS[status] || status}`;
     if (status === 'available') {
       const prompt = buildPrompt({
@@ -203,15 +273,18 @@ export class SuggestionEngine {
       });
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const r = await this.#run(this.deviceModel, prompt, { hasBriefing, onPartial });
+          const r = await this.#run(this.deviceModel, prompt, { hasBriefing, onPartial, signal, mayUseDevice: true });
           if (r.replies) return done(r.replies, r.route, 'Gemini Nano on this computer', hasBriefing);
           deviceProblem = 'Gemini Nano gave an unreadable answer';
         } catch (e) {
+          if (isAbort(e, signal)) return cancelled();
+          this.#deviceReady = false; // ask Chrome again before the next request
           deviceProblem = 'Gemini Nano error: ' + (e?.message || e);
           break;
         }
       }
     }
+    if (deviceOnly) return { ...done([], 'none', deviceProblem, false), unavailable: true };
     if (!this.cloudAllowed()) {
       const why = this.remote.cloud_enabled ? 'cloud not allowed' : 'cloud switched off';
       return done(FALLBACK_REPLIES, status === 'available' ? 'fallback' : 'blocked', `${deviceProblem}; ${why}: basic replies`, false);
@@ -223,16 +296,18 @@ export class SuggestionEngine {
     const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [] } });
     // Nano present but failed: force the cloud. Otherwise let the SDK's
     // PREFER_ON_DEVICE mode decide (it picks the cloud when Nano is missing).
-    const model = status === 'available' || this.forceCloud ? this.cloudModel : this.hybridModel;
+    const forced = status === 'available' || this.forceCloud;
+    const model = forced ? this.cloudModel : this.hybridModel;
     const sent = share && hasBriefing ? 'last 2 caption lines and briefing excerpts sent' : 'last 2 caption lines sent';
     try {
-      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial });
+      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial, signal, mayUseDevice: !forced });
       if (r.replies) {
         const where = r.route === 'in_cloud' ? `cloud, ${sent}` : 'on this computer';
         return done(r.replies, r.route, `${deviceProblem}; ${where}`, share && hasBriefing);
       }
       return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud answer unreadable: basic replies`, false);
     } catch (e) {
+      if (isAbort(e, signal)) return cancelled();
       return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud error: basic replies`, false, String(e?.message || e));
     }
   }
