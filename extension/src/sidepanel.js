@@ -9,7 +9,8 @@ import { SuggestionRunner } from '../../core/runner.js';
 import { mountControls } from '../../shared/controls.js';
 import { setPdfWorker } from '../../shared/extract.js';
 import { speakPrivately } from '../../shared/private-speech.js';
-import { isVoiceDownloaded, setupVoice, startVoice, synthesize } from './voice.js';
+import { VOICES, DEFAULT_VOICE } from './voices.js';
+import { currentVoice, downloadedVoices, keepReady, prepare, removeOldVoices, synthesize, unprepare, useVoice } from './voice.js';
 
 /* global __FIREBASE_CONFIG__ */
 const firebaseConfig = __FIREBASE_CONFIG__;
@@ -22,6 +23,10 @@ let settings = { ...DEFAULT_SETTINGS };
 let briefingIndex = null;
 let engine = null;
 let enginePromise = null;
+// Local voice: 'ready' once a voice is loaded and can speak.
+let voiceReady = false;
+let voiceFailed = false;
+let voiceStarting = false;
 
 // The App Check debug token lives only in this extension page's own storage:
 // content scripts on meet.google.com cannot read it.
@@ -70,17 +75,18 @@ const controls = mountControls(document.getElementById('app'), {
   briefing: briefingStore,
   onBriefing: (idx) => (briefingIndex = idx),
   voice: {
-    status: async () => (voiceReady ? 'ready' : voiceFailed ? 'failed' : (await isVoiceDownloaded()) ? 'loading' : 'missing'),
-    setup: async (onProgress) => {
-      voiceFailed = false;
-      try {
-        await setupVoice(onProgress);
-        setVoiceReady(true);
-      } catch (e) {
-        voiceFailed = true;
-        throw e;
-      }
+    list: VOICES.map((v) => ({ id: v.id, label: v.label, mb: Math.round(v.bytes / 1e6) })),
+    status: async () => {
+      const downloaded = await downloadedVoices();
+      return {
+        // A downloaded voice that is not ready yet is starting.
+        state: voiceReady ? 'ready' : voiceFailed ? 'failed' : voiceStarting || downloaded.length ? 'loading' : 'missing',
+        // The voice in use, or the one that "Set up the voice" will download.
+        voice: currentVoice() || (VOICES.some((v) => v.id === settings.voice) ? settings.voice : DEFAULT_VOICE),
+        downloaded,
+      };
     },
+    choose: chooseVoice,
     test: async () => {
       const { pcm16, rate } = await synthesize('Hi, this is my Pipe Up voice.');
       playLocally(pcm16, rate);
@@ -117,16 +123,18 @@ async function loadSettings() {
   await chrome.storage.local.set({ settings: s });
   settings = s;
 }
-loadSettings().then(startEngine);
+loadSettings().then(() => {
+  startEngine();
+  startSavedVoice();
+});
 chrome.storage.onChanged.addListener((changes) => {
   if (!changes.settings) return;
   settings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
   controls.applySettings(settings);
+  keepPhrasesReady();
 });
 
 // ---------- Local voice ----------
-let voiceReady = false;
-let voiceFailed = false;
 function setVoiceReady(on) {
   voiceReady = on;
   // Tells Meet tabs opened from now on to mix the voice into the microphone.
@@ -134,18 +142,67 @@ function setVoiceReady(on) {
   if (port) safePost(port, { type: 'voice', ready: on });
   controls.refreshVoice();
 }
-isVoiceDownloaded().then(async (has) => {
-  if (!has) return;
+
+/**
+ * Makes a voice the one in use, downloading it first if needed. If that
+ * fails, the voice that was in use keeps working.
+ */
+async function chooseVoice(id, onProgress) {
+  voiceFailed = false;
+  voiceStarting = true;
   try {
-    await startVoice();
-    setVoiceReady(true);
+    await useVoice(id, onProgress);
   } catch (e) {
-    console.warn('[Pipe Up] voice could not start', e);
-    voiceFailed = true;
-    chrome.storage.local.set({ voiceInstalled: false });
-    controls.refreshVoice();
+    if (!voiceReady) voiceFailed = true;
+    throw e;
+  } finally {
+    voiceStarting = false;
   }
-});
+  if (settings.voice !== id) await settingsStore.set({ voice: id });
+  setVoiceReady(true);
+  keepPhrasesReady();
+}
+
+// At start: the saved voice if it was downloaded before, otherwise another
+// downloaded one.
+async function startSavedVoice() {
+  await removeOldVoices();
+  const have = await downloadedVoices();
+  if (have.length) controls.refreshVoice();
+  for (const id of [settings.voice, ...have].filter((id, i, all) => have.includes(id) && all.indexOf(id) === i)) {
+    try {
+      return await chooseVoice(id);
+    } catch (e) {
+      console.warn('[Pipe Up] voice could not start', id, e);
+    }
+  }
+  // Meet tabs must not expect a voice that is not there.
+  chrome.storage.local.set({ voiceInstalled: false });
+  controls.refreshVoice();
+}
+
+// The quick phrases and the "tell others" line are prepared in advance, so
+// Alt+1 speaks at once. Only when replies are spoken into the call.
+const speaksInCall = () => voiceReady && settings.outputMode !== 'chat';
+function keepPhrasesReady() {
+  if (!voiceReady) return;
+  keepReady(speaksInCall() ? [...(settings.fillers || []), settings.disclosure || ''] : []);
+}
+
+// The first suggestion is prepared too, in the background, once the
+// suggestions are complete. The voice runs in its own worker and on one
+// processor core, so this does not hold back the next suggestions; it is
+// dropped if a new question arrives before it started.
+let preparedReply = '';
+function prepareFirstReply(replies) {
+  forgetPreparedReply();
+  preparedReply = (speaksInCall() && replies?.[0]?.text) || '';
+  if (preparedReply) prepare(preparedReply);
+}
+function forgetPreparedReply() {
+  if (preparedReply) unprepare(preparedReply);
+  preparedReply = '';
+}
 let localCtx = null;
 let localSrc = null;
 function playLocally(pcm16, rate) {
@@ -193,7 +250,10 @@ const runner = new SuggestionRunner({
   getEngine: () => startEngine(),
   peekEngine: () => engine,
   onPartial: (job, replies) => safePost(job.port, { type: 'partial', id: job.id, replies }),
-  onResult: (job, res) => safePost(job.port, { type: 'result', id: job.id, ...res }),
+  onResult: (job, res) => {
+    safePost(job.port, { type: 'result', id: job.id, ...res });
+    prepareFirstReply(res.replies); // voice: have the first suggestion ready to speak
+  },
   onLog: (res) => controls.reportRun(res),
 });
 
@@ -231,6 +291,7 @@ async function connectActiveTab() {
 
 async function onTabMessage(p, msg) {
   if (msg?.type === 'suggest') {
+    forgetPreparedReply(); // the voice's prepared first reply belongs to the old question
     runner.request({ id: msg.id, lines: msg.lines, port: p });
   } else if (msg?.type === 'speculate') {
     runner.speculate(msg.lines);
