@@ -9,14 +9,27 @@ const SEND_WORDS = ['send', 'envoyer', 'enviar', 'senden', 'invia', 'verzenden',
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const label = (n) => (n.getAttribute('aria-label') || '').toLowerCase();
 
+const visible = (n) => n.offsetParent !== null;
+
+// The chat panel, when Meet tells which one it is: the element the chat
+// button controls, or a visible container labelled like the chat.
+function findChatPanel() {
+  const controlled = document.getElementById(findChatToggle()?.getAttribute('aria-controls') || '');
+  if (controlled && visible(controlled)) return controlled;
+  return [...document.querySelectorAll('[aria-label]:not(button):not(textarea)')].find((n) => visible(n) && CHAT_LABELS.some((l) => label(n).includes(l))) || null;
+}
+
+// Only the chat box is ever typed into. Another open panel (Q&A, polls,
+// feedback) can also have a text field and a "send" button: a reply must
+// never go there, so a field is accepted only if
 function findChatBox() {
-  const areas = [...document.querySelectorAll('textarea')].filter((t) => t.offsetParent !== null);
-  // 1. A textarea labelled like Meet's chat box.
+  const areas = [...document.querySelectorAll('textarea')].filter(visible);
+  // 1. it is labelled like Meet's chat box, or
   const labelled = areas.find((t) => BOX_LABELS.some((l) => label(t).includes(l)));
   if (labelled) return labelled;
-  // 2. Otherwise, only a textarea that sits next to a "send" button, so a
-  //    Q&A or feedback field is never used by mistake.
-  return areas.find((t) => findSendButton(t)) || null;
+  // 2. it sits inside the chat panel.
+  const panel = findChatPanel();
+  return (panel && areas.find((t) => panel.contains(t))) || null;
 }
 
 function findSendButton(box) {
@@ -37,6 +50,8 @@ function findChatToggle() {
   return null;
 }
 
+// Opens the chat if needed, then looks for its box. With no chat box, the
+// caller falls back to the clipboard and says so.
 async function openChatBox() {
   let box = findChatBox();
   if (box) return box;

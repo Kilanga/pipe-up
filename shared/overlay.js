@@ -76,11 +76,14 @@ const ROUTE_LABEL = {
   thinking: 'Thinking…',
 };
 
+// Every handler of the panel goes through here. Only real user input counts:
+// an event made by a script in the page (`isTrusted` false) is ignored, so
+// the page can never pick, edit, send or dismiss a reply on its own.
 function el(tag, attrs = {}, ...children) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (k === 'class') n.className = v;
-    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), (e) => e.isTrusted && v(e));
     else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? '' : v);
   }
   for (const c of children.flat()) if (c != null) n.append(c);
@@ -95,10 +98,15 @@ function el(tag, attrs = {}, ...children) {
  * @param {(patch:object) => void} cb.onSettings
  * @param {() => void} [cb.onRequest] "Suggest replies now" (on-demand mode)
  * @param {() => void} [cb.onOpenPanel]
+ * @param {object} [o]
+ * @param {boolean} [o.closed] closed shadow root: scripts of the page cannot read the
+ *        suggestions, the quick phrases or the "tell others" line. The extension uses it
+ *        in Meet. The hosted demo keeps an open root: it is our own page, with nothing
+ *        to hide from itself, and its end-to-end checks read the panel through it.
  */
-export function createOverlay(cb, { mount = document.documentElement, position = null, inline = false } = {}) {
+export function createOverlay(cb, { mount = document.documentElement, position = null, inline = false, closed = false } = {}) {
   const host = el('div', { id: 'pipe-up-overlay' });
-  const root = host.attachShadow({ mode: 'open' });
+  const root = host.attachShadow({ mode: closed ? 'closed' : 'open' });
   root.append(el('style', {}, CSS));
   mount.append(host);
 
@@ -276,15 +284,17 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     if (msg) flash(msg);
   }
 
-  function flash(msg) {
+  function flash(msg, ms = 4500) {
     notice.hidden = false;
     notice.textContent = msg;
     clearTimeout(flash.t);
-    flash.t = setTimeout(() => (notice.hidden = true), 4500);
+    flash.t = setTimeout(() => (notice.hidden = true), ms);
   }
 
   // Keys are only taken when the focus is not in a field and not on one of
   // Meet's own controls, so Meet's shortcuts and screen readers keep working.
+  // (With a closed root, a path that crosses it is only visible to listeners
+  // inside the root, so isTyping() below looks at the root's own focus too.)
   function focusIsNeutral() {
     const ae = document.activeElement;
     return !ae || ae === document.body || ae === document.documentElement || ae === host;
@@ -294,7 +304,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     return Boolean(ae && ae !== host && ae.closest?.('[role=dialog],[role=menu],[role=listbox],[aria-modal=true]'));
   }
   function isTyping(e) {
-    const t = (e.composedPath ? e.composedPath() : [e.target])[0];
+    const t = root.activeElement || (e.composedPath ? e.composedPath() : [e.target])[0];
     return t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''));
   }
 
@@ -306,6 +316,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   }
 
   function onKey(e) {
+    if (!e.isTrusted) return; // a key "pressed" by a script of the page is not the user
     if (e.repeat || e.isComposing || e.keyCode === 229) return;
     // Alt shortcuts work everywhere, even while typing (AltGr = Ctrl+Alt is left alone).
     if (e.altKey && !e.ctrlKey && !e.metaKey) {

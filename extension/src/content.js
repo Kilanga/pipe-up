@@ -2,7 +2,7 @@ import { createOverlay } from '../../shared/overlay.js';
 import { watchCaptions, setMyName } from './meet-captions.js';
 import { sendToMeetChat } from './meet-chat.js';
 import { raiseHand } from './meet-hand.js';
-import { DEFAULT_SETTINGS, REMOTE_DEFAULTS } from '../../core/config.js';
+import { DEFAULT_SETTINGS, REMOTE_DEFAULTS, CLOUD_PROBLEM_TEXT } from '../../core/config.js';
 
 let settings = { ...DEFAULT_SETTINGS };
 let port = null; // to the side panel, which runs the AI
@@ -29,7 +29,7 @@ const overlay = createOverlay({
   onOpenPanel: () => chrome.runtime.sendMessage({ type: 'pu:open-panel' }),
   // Read in the side panel, on this computer only (never into the call).
   onHear: (text) => port?.postMessage({ type: 'preview', text }),
-});
+}, { closed: true }); // Meet's page scripts cannot read or drive the panel
 
 chrome.storage.local.get('settings').then(({ settings: s }) => applySettings(s));
 chrome.storage.onChanged.addListener((changes) => {
@@ -89,6 +89,8 @@ function onPanelMessage(msg) {
   if (msg.type === 'result') {
     overlay.setSuggestions(msg.replies, msg.route, contexts.get(msg.id));
     if (msg.route === 'blocked') overlay.notice('On-device AI is not ready. Open the side panel (⚙) to set it up or allow the cloud.');
+    // The cloud refused or could not answer: say so, long enough to be read.
+    if (msg.cloudProblem) overlay.notice(CLOUD_PROBLEM_TEXT[msg.cloudProblem], 12000);
   }
 }
 
@@ -138,7 +140,7 @@ const VOICE_PROBLEMS = {
   muted: 'You are muted in Meet: unmute so others can hear the voice.',
   'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
   reload: 'The voice was set up after you joined: reload this Meet tab to use it.',
-  'no-mic': 'Join the call with your microphone on, then Pipe Up can speak for you.',
+  'no-mic': 'Join the call with your microphone on, then the voice can read your reply in the call.',
   'bad-audio': 'The voice could not read this reply.',
 };
 window.addEventListener('message', (e) => {
