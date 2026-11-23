@@ -92,6 +92,8 @@ const t0 = Date.now();
 await button('Try again').click();
 ok('voice downloaded, checked and ready', await waitFor(/The voice is ready/), `${((Date.now() - t0) / 1000).toFixed(1)} s`);
 ok('downloaded from the pinned revision of rhasspy/piper-voices', downloads.length > 0 && downloads.every((u) => u.startsWith(`https://huggingface.co/rhasspy/piper-voices/resolve/${VOICE_REVISION}/en/en_US/`)), downloads.at(-1));
+await button('Test the voice').click(); await panel.waitForTimeout(2500);
+ok('"Test the voice" plays without an error', /The voice is ready/.test(await status()), await status());
 ok('model and settings stored', JSON.stringify(await stored()) === JSON.stringify([FEMALE.id + '.onnx', FEMALE.id + '.onnx.json']), JSON.stringify(await stored()));
 
 // ---------- Speaking into the call ----------

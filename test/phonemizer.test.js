@@ -91,7 +91,8 @@ test('the small data file keeps the shared files and far fewer dictionaries', ()
 
 test('phonemes are identical with the full and the small data', async () => {
   let ids = 0;
-  for (const voice of ['en-us', 'en-gb-x-rp']) {
+  // 'en' is the espeak-ng voice of the Piper voices Pipe Up offers.
+  for (const voice of ['en', 'en-us', 'en-gb-x-rp']) {
     for (const text of SENTENCES) {
       const expected = await full(text, voice);
       assert.ok(expected.length > 3, text);
@@ -99,7 +100,7 @@ test('phonemes are identical with the full and the small data', async () => {
       ids += expected.length;
     }
   }
-  assert.ok(ids > 10000);
+  assert.ok(ids > 15000);
 });
 
 test('English alone would change words written in other scripts', async () => {
