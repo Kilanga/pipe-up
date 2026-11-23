@@ -7,6 +7,8 @@ import { REMOTE_DEFAULTS, FALLBACK_REPLIES } from './config.js';
 import { buildPrompt, parseReplies, partialReplies, systemRules, RESPONSE_JSON_SCHEMA } from './prompt.js';
 import { retrieveBriefing } from './briefing.js';
 import { similarExamples, ignoredSuggestions } from './memory.js';
+import { PREP_JSON_SCHEMA, prepRules, planPreparation, buildPrepPrompt, parsePrepared, mergePrepared } from './prepare.js';
+import { similarity } from './text.js';
 
 const LANG = [{ type: 'text', languages: ['en'] }];
 
@@ -137,6 +139,30 @@ export class SuggestionEngine {
     this.cloudModel = this.createModel({ mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
   }
 
+  // Models for "Prepare for the call", built on first use.
+  #buildPrepModels() {
+    if (this.prepCloudModel) return;
+    const rules = prepRules();
+    const onDeviceParams = {
+      createOptions: { expectedInputs: LANG, expectedOutputs: LANG, initialPrompts: [{ role: 'system', content: rules }] },
+      promptOptions: { responseConstraint: PREP_JSON_SCHEMA },
+    };
+    const inCloudParams = {
+      model: this.remote.cloud_model,
+      systemInstruction: rules,
+      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: PREP_JSON_SCHEMA, temperature: 0.2, maxOutputTokens: 1024 },
+    };
+    this.prepDeviceParams = onDeviceParams;
+    // The fourth hybrid mode, for the work done before the call:
+    // - PREFER_IN_CLOUD: after an explicit click, a cloud model reads the
+    //   whole briefing in one request. If the cloud cannot be reached and
+    //   Gemini Nano is there, the SDK does it on the device instead; the
+    //   log shows the route that was really taken (inferenceSource).
+    this.prepCloudModel = this.createModel({ mode: InferenceMode.PREFER_IN_CLOUD, onDeviceParams, inCloudParams });
+    // - ONLY_ON_DEVICE: the same work on Gemini Nano, part by part.
+    this.prepDeviceModel = this.createModel({ mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams, inCloudParams });
+  }
+
   /** Must be called from a click: may download Gemini Nano. */
   async prepareDevice(onProgress) {
     await this.deviceModel.initializeDeviceModel(onProgress);
@@ -229,6 +255,69 @@ export class SuggestionEngine {
   }
 
   /**
+   * "Prepare for the call": turns the briefing into likely questions with a
+   * short answer each.
+   * - target 'cloud': one request in PREFER_IN_CLOUD mode. The caller asks
+   *   for an explicit confirmation first; the standing cloud settings are
+   *   neither needed nor changed. The Remote Config kill switch applies.
+   * - target 'device': Gemini Nano, one request per part of the briefing.
+   * @param {object} briefing the saved briefing (positions, notes, documentText)
+   * @param {object} o
+   * @param {'cloud'|'device'} o.target
+   * @param {(done:number, total:number) => void} [o.onProgress]
+   * @param {AbortSignal} [o.signal]
+   * @returns {Promise<{items:Array<{question:string,answer:string}>, route:string, ms:number, words:number, total:number, shortened:boolean, parts:number, dropped:number}>}
+   * @throws {Error} with `code`: 'empty' | 'cloud-off' | 'no-device' | 'cancelled' | 'failed'
+   */
+  async prepare(briefing, { target, onProgress, signal } = {}) {
+    const t0 = performance.now();
+    const fail = (code, message) => Object.assign(new Error(message), { code });
+    const plan = planPreparation(briefing, target);
+    if (!plan.parts.length) throw fail('empty', 'The briefing is empty');
+    if (target === 'cloud' && !this.remote.cloud_enabled) throw fail('cloud-off', 'The cloud is switched off');
+    if (target === 'device' && (await this.#status()) !== 'available') throw fail('no-device', 'Gemini Nano is not available');
+    this.#buildPrepModels();
+    const model = target === 'cloud' ? this.prepCloudModel : this.prepDeviceModel;
+    const lists = [];
+    let dropped = 0;
+    let route = null;
+    let lastError = null;
+    for (const [i, text] of plan.parts.entries()) {
+      const part = plan.parts.length > 1 ? { index: i + 1, count: plan.parts.length } : null;
+      const prompt = buildPrepPrompt(text, { maxItems: plan.perPart, part });
+      try {
+        // Both models may run on Gemini Nano (PREFER_IN_CLOUD falls back to
+        // it), so the signal is given both ways.
+        const { response } = await this.#onDevice('prepare', this.prepDeviceParams, signal, () => model.generateContent(prompt, signal ? { signal } : undefined));
+        route = response.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device';
+        const parsed = parsePrepared(response.text(), { maxItems: plan.perPart, briefing: text });
+        if (parsed) {
+          lists.push(parsed.items);
+          dropped += parsed.dropped;
+        } else {
+          lastError = new Error('unreadable answer');
+        }
+      } catch (e) {
+        if (isAbort(e, signal)) throw fail('cancelled', 'Preparation stopped');
+        if (target === 'device') this.#deviceReady = false;
+        lastError = e;
+      }
+      onProgress?.(i + 1, plan.parts.length);
+    }
+    if (!lists.length) throw Object.assign(fail('failed', String(lastError?.message || lastError)), { cause: lastError });
+    return {
+      items: mergePrepared(lists),
+      route,
+      ms: Math.round(performance.now() - t0),
+      words: plan.words,
+      total: plan.total,
+      shortened: plan.shortened,
+      parts: plan.parts.length,
+      dropped,
+    };
+  }
+
+  /**
    * @param {Array<{speaker?:string,text:string}>} lines recent captions, last = what was just said
    * @param {object} [opts]
    * @param {(replies:Array<{text:string,source:string}>) => void} [opts.onPartial]
@@ -245,21 +334,36 @@ export class SuggestionEngine {
       this.maxWords = wanted;
       this.#buildModels();
     }
+    const events = settings.dontLearn ? [] : await this.memory.all();
+    const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
+    const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length || briefing.prepared.length);
+    // The answer the user prepared for this question, if one matches. It
+    // never leaves the computer unless briefing sharing is on.
+    const prepared = briefing.prepared[0] || null;
+    const fromPrepared = (r) => similarity(r.text, prepared.answer) >= 0.5;
+    // A reply that says the prepared answer is from the briefing, whatever
+    // label the model gave it.
+    const tagged = (replies) => (prepared ? replies.map((r) => (fromPrepared(r) ? { ...r, source: 'briefing' } : r)) : replies);
+    // No model may read the briefing here: the prepared answer is offered as
+    // it is, ahead of the other replies. This is a lookup on this computer.
+    const preparedFirst = (replies) =>
+      prepared ? [{ text: prepared.answer, source: 'briefing' }, ...replies.filter((r) => !fromPrepared(r))].slice(0, 3) : replies;
+    const basic = () => (prepared ? preparedFirst(FALLBACK_REPLIES.slice(1)) : FALLBACK_REPLIES);
+    const basicWords = prepared ? 'your prepared answer and basic replies' : 'basic replies';
+
     const done = (replies, route, reason, usedBriefing, error) => ({
       replies,
       route,
       reason,
       ms: Math.round(performance.now() - t0),
       hasBriefing: Boolean(usedBriefing),
+      // True when a reply says what the user prepared for this question.
+      usedPrepared: Boolean(prepared && replies.some((r) => r.source === 'briefing' && fromPrepared(r))),
       error,
     });
     // A cancelled request is a normal outcome, not an error: nothing is
     // shown and nothing falls back to the cloud because of it.
     const cancelled = () => ({ ...done([], 'cancelled', 'Replaced by a newer question', false), cancelled: true });
-
-    const events = settings.dontLearn ? [] : await this.memory.all();
-    const briefing = retrieveBriefing(this.getBriefing(), utterance, { maxChunks: Number(this.remote.briefing_chunks) || 2 });
-    const hasBriefing = Boolean(briefing.chunks.length || briefing.positions.length);
 
     const status = await this.#status();
     if (signal?.aborted) return cancelled();
@@ -274,7 +378,7 @@ export class SuggestionEngine {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const r = await this.#run(this.deviceModel, prompt, { hasBriefing, onPartial, signal, mayUseDevice: true });
-          if (r.replies) return done(r.replies, r.route, 'Gemini Nano on this computer', hasBriefing);
+          if (r.replies) return done(tagged(r.replies), r.route, 'Gemini Nano on this computer', hasBriefing);
           deviceProblem = 'Gemini Nano gave an unreadable answer';
         } catch (e) {
           if (isAbort(e, signal)) return cancelled();
@@ -287,28 +391,34 @@ export class SuggestionEngine {
     if (deviceOnly) return { ...done([], 'none', deviceProblem, false), unavailable: true };
     if (!this.cloudAllowed()) {
       const why = this.remote.cloud_enabled ? 'cloud not allowed' : 'cloud switched off';
-      return done(FALLBACK_REPLIES, status === 'available' ? 'fallback' : 'blocked', `${deviceProblem}; ${why}: basic replies`, false);
+      return done(basic(), status === 'available' ? 'fallback' : 'blocked', `${deviceProblem}; ${why}: ${basicWords}`, Boolean(prepared));
     }
 
-    // Cloud path: personal history is never sent; briefing excerpts only if
-    // the user turned on the separate option.
+    // Cloud path: personal history is never sent; briefing excerpts (and a
+    // matching prepared answer) only if the user turned on the separate option.
     const share = Boolean(settings.shareBriefingWithCloud);
-    const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [] } });
+    const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [], prepared: [] } });
+    // Without sharing, the prepared answer is added here, after the cloud
+    // answered: shown first from the start so the cards do not move.
+    const local = !share && prepared ? preparedFirst : (replies) => replies;
+    const cloudPartial = onPartial && ((replies) => onPartial(local(replies)));
+    if (!share && prepared) onPartial?.(local([]));
     // Nano present but failed: force the cloud. Otherwise let the SDK's
     // PREFER_ON_DEVICE mode decide (it picks the cloud when Nano is missing).
     const forced = status === 'available' || this.forceCloud;
     const model = forced ? this.cloudModel : this.hybridModel;
     const sent = share && hasBriefing ? 'last 2 caption lines and briefing excerpts sent' : 'last 2 caption lines sent';
     try {
-      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial, signal, mayUseDevice: !forced });
+      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial: cloudPartial, signal, mayUseDevice: !forced });
       if (r.replies) {
         const where = r.route === 'in_cloud' ? `cloud, ${sent}` : 'on this computer';
-        return done(r.replies, r.route, `${deviceProblem}; ${where}`, share && hasBriefing);
+        const added = !share && prepared ? '; your prepared answer was added on this computer' : '';
+        return done(share ? tagged(r.replies) : local(r.replies), r.route, `${deviceProblem}; ${where}${added}`, (share && hasBriefing) || Boolean(prepared));
       }
-      return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud answer unreadable: basic replies`, false);
+      return done(basic(), 'fallback', `${deviceProblem}; cloud answer unreadable: ${basicWords}`, Boolean(prepared));
     } catch (e) {
       if (isAbort(e, signal)) return cancelled();
-      return done(FALLBACK_REPLIES, 'fallback', `${deviceProblem}; cloud error: basic replies`, false, String(e?.message || e));
+      return done(basic(), 'fallback', `${deviceProblem}; cloud error: ${basicWords}`, Boolean(prepared), String(e?.message || e));
     }
   }
 }
