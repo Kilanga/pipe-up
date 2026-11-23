@@ -115,7 +115,7 @@ await P.confirm.getByRole('button', { name: 'Cancel' }).click(); await page.wait
 ok('cloud: Cancel sends nothing and gives the focus back', cloud0.length === 0 && await P.confirm.isHidden() && await P.cloudBtn.evaluate((b) => b === document.activeElement));
 await P.cloudBtn.click(); await P.confirm.getByRole('button', { name: 'Continue' }).click();
 await P.rows.first().waitFor({ timeout: 15000 }).catch(() => {});
-ok('cloud: one request, carrying the briefing text', cloud0.length === 1 && cloud0[0].body.includes('Northwind') && cloud0[0].url.includes(':generateContent'), String(cloud0.length));
+ok('cloud: one request, carrying the briefing text', cloud0.length === 1 && cloud0[0].body.includes('Zorvex') && cloud0[0].url.includes(':generateContent'), String(cloud0.length));
 ok('cloud: the request used PREFER_IN_CLOUD and JSON schema output', cloud0[0]?.body.includes('responseJsonSchema') && cloud0[0]?.body.includes('"items"'));
 ok('cloud: the focus moves to the first prepared question', await P.rows.nth(0).locator('input').evaluate((i) => i === document.activeElement));
 ok('cloud: the prepared answers are listed for review', (await P.rows.count()) === 4 && /Check and edit: these are your answers, in your words\./.test(await P.section.innerText()), String(await P.rows.count()));
