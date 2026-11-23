@@ -12,7 +12,8 @@
 // Bengali, Gurmukhi, Gujarati, Tamil, Telugu, Kannada, Malayalam, Sinhala,
 // Georgian and Korean. With this list the phonemes are the same as with the
 // full data for every text (see test/phonemizer.test.js). English alone
-// would save another 1.2 MB, but words in those scripts would be skipped.
+// would save another 1.2 MB (0.3 MB in the zip), but words in those scripts
+// would be skipped.
 export const ENGLISH_VOICE_DICTIONARIES = ['en', 'el', 'hy', 'hi', 'bn', 'pa', 'gu', 'ta', 'te', 'kn', 'ml', 'si', 'ka', 'ko'];
 
 // The table as written in the loader: loadPackage({"files":[...],"remote_package_size":N})
@@ -22,8 +23,8 @@ const DICTIONARY = /^\/espeak-ng-data\/([a-z]+)_dict$/;
 const fail = (why) => {
   throw new Error(
     `Cannot trim the phonemizer data: ${why}. ` +
-      'The phonemizer loader in @mintplex-labs/piper-tts-web or the data file in @diffusionstudio/piper-wasm ' +
-      'has probably changed version: update scripts/phonemizer-data.mjs before building.'
+      'The phonemizer in @diffusionstudio/piper-wasm (build/piper_phonemize.js and .data) has probably changed version: ' +
+      'update scripts/phonemizer-data.mjs before building.'
   );
 };
 

@@ -39,7 +39,7 @@ const ACTION_LABEL = { picked: 'Picked a suggestion', edited: 'Edited a suggesti
  * @param {{get:()=>Promise<object>, set:(b:object)=>Promise<void>}} o.briefing
  * @param {(b:object)=>void} o.onBriefing  called with the new briefing index
  * @param {{get:()=>string, set:(v:string)=>void}} [o.debugToken] extension only
- * @param {{status:()=>Promise<string>, setup:(p:(v:number)=>void)=>Promise<void>, test:()=>Promise<void>}} [o.voice] extension only
+ * @param {{list:{id:string,label:string,mb:number}[], status:()=>Promise<{state:string,voice:string,downloaded:string[]}>, choose:(id:string,p?:(v:number)=>void)=>Promise<void>, test:()=>Promise<void>}} [o.voice] extension only
  * @param {boolean} [o.demo] hosted demo: "simulate no Gemini Nano" switch, no Meet connection
  */
 export function mountControls(root, o) {
@@ -100,7 +100,8 @@ export function mountControls(root, o) {
   // Declared before put(panes.Live, ...), which calls voiceSection().
   const voiceStatus = h('p', { role: 'status' }, 'Checking the voice…');
   const voiceProgress = h('progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Voice download progress' });
-  const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: setupVoiceClick }, 'Set up the voice (about 60 MB, once)');
+  const voicePick = h('select', { onchange: pickVoice }, ...(o.voice?.list || []).map((v) => h('option', { value: v.id }, `${v.label} (${v.mb} MB)`)));
+  const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: () => useVoice(voicePick.value) });
   const voiceTest = h('button', { hidden: true, onclick: () => o.voice.test().catch((e) => (voiceStatus.textContent = 'Voice error: ' + e.message)) }, 'Test the voice');
   put(panes.Live, 
     o.demo ? null : connection,
@@ -134,30 +135,59 @@ export function mountControls(root, o) {
       { class: 'field' },
       h('h2', {}, 'Voice into the call'),
       h('p', { class: 'muted' }, 'Optional. A synthetic voice, generated on this computer, reads your chosen reply aloud in the call (choose "Chat + synthetic voice" or "Synthetic voice only" in the call panel). Others hear a computer voice, not yours: you can tell them first with your Alt+D line. Your text never leaves your computer.'),
+      h('label', { class: 'field' }, 'Voice', h('span', { class: 'muted' }, 'Each voice is downloaded once, when you first choose it.'), voicePick),
       voiceStatus,
       voiceProgress,
       h('div', { class: 'row' }, voiceSetup, voiceTest)
     );
   }
+  let voiceBusy = false; // a voice is being downloaded or started from here
+  let voicePicked = false; // the list shows the user's pick, not yet the voice in use
   async function refreshVoice() {
-    if (!o.voice) return;
-    const v = await o.voice.status();
-    voiceStatus.textContent = { ready: 'The voice is ready.', loading: 'Starting the voice…', missing: 'The voice is not set up.', failed: 'The voice could not start. Try again.' }[v] || v;
-    voiceSetup.hidden = v !== 'missing' && v !== 'failed';
-    voiceSetup.textContent = v === 'failed' ? 'Try again' : 'Set up the voice (about 60 MB, once)';
-    voiceTest.hidden = v !== 'ready';
+    if (!o.voice || voiceBusy) return;
+    const { state, voice } = await o.voice.status();
+    if (voiceBusy) return;
+    if (!voicePicked) voicePick.value = voice;
+    const pick = o.voice.list.find((v) => v.id === voicePick.value);
+    // The list shows a voice that is not in use yet: offer to download it.
+    const other = state === 'ready' && pick.id !== voice;
+    voiceStatus.textContent = other
+      ? 'This voice is not on your computer yet. Your current voice stays in use until it is downloaded.'
+      : { ready: 'The voice is ready.', loading: 'Starting the voice…', missing: 'The voice is not set up.', failed: 'The voice could not start. Try again.' }[state] || state;
+    voiceSetup.hidden = !(other || state === 'missing' || state === 'failed');
+    voiceSetup.textContent =
+      state === 'failed' ? 'Try again' : other ? `Download this voice (${pick.mb} MB, once)` : `Set up the voice (${pick.mb} MB, once)`;
+    voiceTest.hidden = state !== 'ready' || other;
+    voicePick.disabled = state === 'loading';
   }
-  async function setupVoiceClick() {
-    voiceSetup.disabled = true;
-    voiceProgress.hidden = false;
+  // A voice already on this computer is used at once; another one is
+  // downloaded only when the user asks for it with the button.
+  async function pickVoice() {
+    voicePicked = true;
+    const { state, voice, downloaded } = await o.voice.status();
+    if (state === 'ready' && voicePick.value !== voice && downloaded.includes(voicePick.value)) return useVoice(voicePick.value);
+    refreshVoice();
+  }
+  async function useVoice(id) {
+    voiceBusy = true;
+    voiceSetup.disabled = voicePick.disabled = true;
+    voiceTest.hidden = true;
+    voiceStatus.textContent = 'Starting the voice…';
+    let problem = '';
     try {
-      await o.voice.setup((v) => (voiceProgress.value = v));
+      await o.voice.choose(id, (v) => {
+        voiceStatus.textContent = 'Downloading the voice…';
+        voiceProgress.hidden = false;
+        voiceProgress.value = v;
+      });
     } catch (e) {
-      voiceStatus.textContent = 'Voice setup failed: ' + (e?.message || e);
+      problem = 'Voice setup failed: ' + (e?.message || e);
     }
     voiceProgress.hidden = true;
-    voiceSetup.disabled = false;
-    refreshVoice();
+    voiceSetup.disabled = voicePick.disabled = false;
+    voiceBusy = voicePicked = false;
+    await refreshVoice();
+    if (problem) voiceStatus.textContent = problem;
   }
   refreshVoice();
   let lastStatus = null;

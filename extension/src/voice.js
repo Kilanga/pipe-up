@@ -1,81 +1,191 @@
-// Local text-to-speech for the side panel: Piper voices running in
-// WebAssembly (ONNX Runtime). Nothing is sent anywhere: the voice model is
-// downloaded once from Hugging Face, then kept in this extension's storage.
-//
-// Licensing: piper-tts-web is MIT; the phonemizer (piper-phonemize with
-// espeak-ng data) is GPL-3.0 and ships as a separate, optional module in the
-// extension's voice/ folder, with its license. The voice model itself is not
-// bundled: it is downloaded from Hugging Face under its own license (see
-// THIRD_PARTY_NOTICES.md).
-import { TtsSession, stored } from '@mintplex-labs/piper-tts-web';
+// The side panel's access to the local voice. The voice itself runs in a
+// worker (voice-worker.js), started only when a voice is set up. This file
+// starts it, keeps the phrases the user is most likely to say ready in
+// advance, and puts a reply the user is waiting for ahead of that
+// preparation.
+import { VOICES, voiceUrl } from './voices.js';
 
-export const VOICE_ID = 'en_US-hfc_female-medium';
+// ---------- The worker ----------
+let worker = null;
+let loaded = null; // id of the voice the worker has loaded
+let lastId = 0;
+const waiting = new Map(); // request id -> { resolve, reject, onProgress }
 
-const url = (p) => chrome.runtime.getURL('voice/' + p);
-const wasmPaths = {
-  onnxWasm: url(''),
-  piperData: url('piper_phonemize.data'),
-  piperWasm: url('piper_phonemize.wasm'),
-};
+function ask(message, onProgress) {
+  if (!worker) {
+    worker = new Worker(chrome.runtime.getURL('voice-worker.js'), { type: 'module' });
+    worker.onmessage = ({ data: m }) => {
+      const w = waiting.get(m.id);
+      if (!w) return;
+      if ('progress' in m) return w.onProgress?.(m.progress);
+      waiting.delete(m.id);
+      if ('error' in m) w.reject(new Error(m.error));
+      else w.resolve(m.result);
+    };
+    worker.onerror = (e) => {
+      e.preventDefault?.();
+      stopWorker('The voice stopped working.');
+    };
+  }
+  return new Promise((resolve, reject) => {
+    const id = ++lastId;
+    waiting.set(id, { resolve, reject, onProgress });
+    worker.postMessage({ id, ...message });
+  });
+}
 
-let session = null;
+// Ends a worker that failed or is stuck. Nothing it was doing will be
+// answered; the next request starts a new worker and loads the voice again.
+function stopWorker(why) {
+  worker?.terminate();
+  worker = null;
+  loaded = null;
+  for (const w of waiting.values()) w.reject(new Error(why));
+  waiting.clear();
+}
 
-export async function isVoiceDownloaded() {
+async function load(id, onProgress) {
+  const v = VOICES.find((x) => x.id === id);
+  if (!v) throw new Error('Unknown voice: ' + id);
+  await ask({ op: 'load', voice: { id, url: voiceUrl(id), bytes: v.bytes, sha256: v.sha256, configSha256: v.configSha256 } }, onProgress);
+  loaded = id;
+}
+
+// ---------- Choosing a voice ----------
+let current = null; // id of the voice in use
+
+export const currentVoice = () => current;
+
+const storage = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('piper', { create: true });
+const filesOf = (id) => [id + '.onnx', id + '.onnx.json'];
+
+/** Ids of the voices already downloaded to this computer. */
+export async function downloadedVoices() {
   try {
-    return (await stored()).includes(VOICE_ID);
+    const names = [];
+    for await (const name of (await storage()).keys()) names.push(name);
+    return VOICES.filter((v) => filesOf(v.id).every((f) => names.includes(f))).map((v) => v.id);
   } catch {
-    return false;
+    return []; // storage not available: nothing downloaded
+  }
+}
+
+/** Frees the space taken by voices that an older version offered. */
+export async function removeOldVoices() {
+  try {
+    const dir = await storage();
+    const keep = VOICES.flatMap((v) => filesOf(v.id));
+    for await (const name of dir.keys()) if (!keep.includes(name)) await dir.removeEntry(name, { recursive: true });
+  } catch {
+    // storage not available
   }
 }
 
 /**
- * Downloads the voice once (about 60 MB), from a click. The library's own
- * download() does not wait for its storage write, so the session is created
- * directly: it downloads, stores and loads in one awaited step.
+ * Makes a voice the one in use; downloads it first if needed (about 64 MB,
+ * `onProgress` gets 0…1). If this fails, the voice in use before stays.
  */
-export function setupVoice(onProgress) {
-  return startVoice((p) => p.total && p.url?.endsWith('.onnx') && onProgress?.(p.loaded / p.total));
+export async function useVoice(id, onProgress) {
+  await load(id, onProgress);
+  if (current !== id) forgetAll(); // prepared with another voice
+  current = id;
+  refill();
 }
 
-let starting = null;
-export function startVoice(progress) {
-  starting ??= TtsSession.create({ voiceId: VOICE_ID, wasmPaths, progress })
-    .then((s) => (session = s))
-    .catch(async (e) => {
-      // The library keeps a half-built session and whatever it downloaded,
-      // even an error page: drop both so "Try again" really starts over.
-      TtsSession._instance = null;
-      starting = null;
-      session = null;
-      await removeDownloads();
-      throw e;
-    });
-  return starting;
+// ---------- Speaking ----------
+// A reply the user wants now goes first; phrases prepared in advance wait.
+const urgent = [];
+const idle = [];
+let busy = false;
+
+async function work() {
+  if (busy) return;
+  busy = true;
+  for (let job; (job = urgent.shift() || idle.shift()); ) {
+    try {
+      if (loaded !== current) await load(current); // after the worker was restarted
+      job.resolve(await ask({ op: 'speak', text: job.text }));
+    } catch (e) {
+      job.reject(e);
+    }
+  }
+  busy = false;
 }
 
-async function removeDownloads() {
-  try {
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry('piper', { recursive: true });
-  } catch {
-    // nothing stored
+// Recent results by text, so the same phrase is never generated twice. Small:
+// one second of speech is about 60 kB here.
+const MAX_READY = 16;
+const MAX_TEXT = 300; // longer texts are not kept
+const ready = new Map(); // text -> Promise<{pcm16, rate}>
+let always = []; // phrases to keep ready whatever else is said
+
+function get(text, list) {
+  let sound = ready.get(text);
+  if (!sound) {
+    sound = new Promise((resolve, reject) => list.push({ text, resolve, reject }));
+    sound.catch(() => ready.get(text) === sound && ready.delete(text)); // a failure is not kept
+  } else if (list === urgent) {
+    // Being prepared in the background but wanted now: move it to the front.
+    const at = idle.findIndex((j) => j.text === text);
+    if (at >= 0) urgent.push(...idle.splice(at, 1));
+  }
+  if (text.length <= MAX_TEXT) remember(text, sound);
+  work();
+  return sound;
+}
+
+function remember(text, sound) {
+  ready.delete(text);
+  ready.set(text, sound); // most recent last
+  for (const old of ready.keys()) {
+    if (ready.size <= MAX_READY) break;
+    if (!always.includes(old)) ready.delete(old);
   }
 }
 
+function forgetAll() {
+  ready.clear();
+  for (const job of idle.splice(0)) job.reject(new Error('Not needed any more.'));
+}
+
+const refill = () => current && always.forEach((text) => get(text, idle).catch(() => {}));
+
+// A reply must never wait for ever: after this long the voice is restarted
+// and the caller is told, so that the reply can go to the chat instead.
+export const MAX_WAIT_MS = 15000;
+
 /**
- * Synthesizes `text` and returns 16-bit PCM as base64 plus the sample rate,
- * small enough to pass through extension messaging.
+ * Turns `text` into sound with the voice in use. Resolves with 16-bit PCM as
+ * base64 plus the sample rate, small enough for extension messaging.
+ * Rejects if the voice fails or takes more than 15 seconds.
  */
-export async function synthesize(text) {
-  const s = await startVoice();
-  const wav = await s.predict(text);
-  const ctx = new OfflineAudioContext(1, 1, 22050);
-  const audio = await ctx.decodeAudioData(await wav.arrayBuffer());
-  const f32 = audio.getChannelData(0);
-  const i16 = new Int16Array(f32.length);
-  for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-1, Math.min(1, f32[i])) * 0x7fff;
-  let bin = '';
-  const bytes = new Uint8Array(i16.buffer);
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return { pcm16: btoa(bin), rate: audio.sampleRate };
+export function synthesize(text) {
+  if (!current) return Promise.reject(new Error('The voice is not ready.'));
+  const sound = get(text.trim(), urgent);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('The voice took too long.'));
+      stopWorker('The voice took too long.');
+    }, MAX_WAIT_MS);
+    sound.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
+/** Phrases to keep ready at all times (quick phrases): spoken without waiting. */
+export function keepReady(texts) {
+  always = [...new Set(texts.map((t) => t.trim()).filter(Boolean))].slice(0, MAX_READY / 2);
+  refill();
+}
+
+/** Prepares one more phrase in the background, when nothing else is waiting. */
+export function prepare(text) {
+  if (current && text.trim()) get(text.trim(), idle).catch(() => {});
+}
+
+/** Gives up preparing `text` if that has not started yet. */
+export function unprepare(text) {
+  const at = idle.findIndex((j) => j.text === text.trim());
+  if (at < 0 || always.includes(text.trim())) return;
+  ready.delete(text.trim());
+  idle.splice(at, 1)[0].reject(new Error('Not needed any more.'));
 }

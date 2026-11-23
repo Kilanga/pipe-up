@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   reduceMotion: false, // also follows the system setting
   compact: false, // one suggestion instead of three
   hearSuggestions: false, // read suggestions aloud in your own headphones only
+  voice: '', // the voice chosen for "voice into the call" (extension); empty: the first one
 };
 
 export const FALLBACK_REPLIES = [
