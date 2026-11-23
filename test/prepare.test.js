@@ -10,7 +10,7 @@ import { wordCount } from '../core/text.js';
 
 const SAM = {
   positions: 'The vendor contract is signed except the penalty clause; legal reviews it on Friday.\nI want to keep the March deadline if QA can start on February 10.\nI am against a second vendor: it would double the onboarding work.',
-  notes: 'Vendor: Northwind Logistics. Timeline: March release holds if QA starts February 10; the risk is the API migration.',
+  notes: 'Vendor: Zorvex Freight. Timeline: March release holds if QA starts February 10; the risk is the API migration.',
 };
 const QA = [
   { question: 'Is the March deadline still realistic?', answer: 'Yes, if QA can start on February 10.' },
@@ -163,7 +163,7 @@ test('prepare with the cloud: PREFER_IN_CLOUD, one request, configured model, no
   assert.equal(call.model, 'gemini-test-model');
   assert.equal(call.system, prepRules());
   assert.equal(call.schema, PREP_JSON_SCHEMA);
-  assert.match(call.prompt, /Northwind Logistics/);
+  assert.match(call.prompt, /Zorvex Freight/);
   assert.equal(state.settings.cloudConsent, false);
   assert.equal(state.settings.shareBriefingWithCloud, false);
 });

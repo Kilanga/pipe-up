@@ -1,9 +1,10 @@
 // Settings, briefing and memory screens. Used by the extension side panel
 // and by the hosted demo page.
 import { deviceStatus } from '../core/engine.js';
+import { CLOUD_PROBLEM_TEXT } from '../core/config.js';
 import { buildBriefingIndex, PREPARED_LIMITS } from '../core/briefing.js';
 import { planPreparation, PREP_LIMITS } from '../core/prepare.js';
-import { adoptionRate } from '../core/memory.js';
+import { adoptionRate, LIMITS as MEMORY_LIMITS } from '../core/memory.js';
 import { extractText } from './extract.js';
 
 const h = (tag, attrs = {}, ...kids) => {
@@ -25,8 +26,9 @@ const STATUS_TEXT = {
   available: 'Gemini Nano is ready on this computer. Suggestions stay on your device.',
   downloadable: 'Gemini Nano can be downloaded (one time, several minutes).',
   downloading: 'Gemini Nano is downloading…',
-  unavailable: 'This computer cannot run Gemini Nano (Chrome desktop 139+, about 22 GB free disk space and a GPU with more than 4 GB of VRAM are needed).',
-  unsupported: 'This browser has no on-device AI. Use Chrome on desktop and enable chrome://flags/#prompt-api-for-gemini-nano-multimodal-input.',
+  // Same requirements as the README ("Gemini Nano setup").
+  unavailable: 'Gemini Nano is not available on this computer. It needs Chrome 139 or later on desktop, about 22 GB of free disk space, and either a GPU with more than 4 GB of VRAM or a CPU with 16 GB of RAM and 4 cores.',
+  unsupported: 'This browser does not offer on-device AI. Use an up-to-date Chrome on desktop. If the model is still not offered, open chrome://flags, enable #prompt-api-for-gemini-nano-multimodal-input and "Gemma 4 for Built-in AI", then restart Chrome.',
 };
 const ROUTE_TEXT = { on_device: 'On device', in_cloud: 'Cloud', fallback: 'Basic replies', blocked: 'Not generated' };
 const ACTION_LABEL = { picked: 'Picked a suggestion', edited: 'Edited a suggestion', typed: 'Wrote my own', spoke: 'Answered myself', filler: 'Quick phrase', dismissed: 'Dismissed' };
@@ -37,10 +39,11 @@ const ACTION_LABEL = { picked: 'Picked a suggestion', edited: 'Edited a suggesti
  * @param {() => import('../core/engine.js').SuggestionEngine | null} o.getEngine
  * @param {import('../core/memory.js').MemoryStore} o.memory
  * @param {{get:()=>Promise<object>, set:(patch:object)=>Promise<void>}} o.settings
- * @param {{get:()=>Promise<object>, set:(b:object)=>Promise<void>}} o.briefing
+ * @param {{get:()=>Promise<object>, set:(b:object, info?:{byUser:boolean})=>Promise<void>}} o.briefing
  * @param {(b:object)=>void} o.onBriefing  called with the new briefing index
  * @param {{get:()=>string, set:(v:string)=>void}} [o.debugToken] extension only
  * @param {{list:{id:string,label:string,mb:number}[], status:()=>Promise<{state:string,voice:string,downloaded:string[]}>, choose:(id:string,p?:(v:number)=>void)=>Promise<void>, test:()=>Promise<void>}} [o.voice] extension only
+ * @param {(on:boolean) => void} [o.onSimulate] hosted demo: the "simulate" switch changed
  * @param {boolean} [o.demo] hosted demo: "simulate no Gemini Nano" switch, no Meet connection
  */
 export function mountControls(root, o) {
@@ -89,6 +92,8 @@ export function mountControls(root, o) {
     'Try with the cloud instead'
   );
   const log = h('ol', { class: 'log', 'aria-label': 'Where each suggestion was generated' });
+  // Says calmly when the cloud refused or could not answer the last request.
+  const cloudNote = h('p', { class: 'cloud-note', role: 'status', hidden: true });
   const cloud = h('input', { type: 'checkbox', onchange: (e) => o.settings.set({ cloudConsent: e.target.checked }) });
   const shareBriefing = h('input', { type: 'checkbox', onchange: (e) => o.settings.set({ shareBriefingWithCloud: e.target.checked }) });
   const simulate = h('input', {
@@ -97,6 +102,7 @@ export function mountControls(root, o) {
       const eng = o.getEngine();
       if (eng) eng.forceCloud = e.target.checked;
       updatePrepButtons();
+      o.onSimulate?.(e.target.checked);
     },
   });
   // Declared before put(panes.Live, ...), which calls voiceSection().
@@ -117,7 +123,7 @@ export function mountControls(root, o) {
       'label',
       { class: 'check' },
       cloud,
-      h('span', {}, h('b', {}, 'Allow the cloud when on-device AI is not available. '), 'Only the last two caption lines are sent to the Gemini API through Firebase. Your history is never sent.')
+      h('span', {}, h('b', {}, 'Allow the cloud when on-device AI is not available. '), 'Only the last two caption lines are sent to the Gemini API through Firebase, with "Speaker A", "Speaker B" in place of names. Your history is never sent.')
     ),
     h(
       'label',
@@ -125,6 +131,7 @@ export function mountControls(root, o) {
       shareBriefing,
       h('span', {}, 'Also send relevant briefing excerpts to the cloud. A briefing can contain confidential work information.')
     ),
+    cloudNote,
     o.demo ? h('label', { class: 'check' }, simulate, h('span', {}, 'Demo: simulate a computer without Gemini Nano')) : null,
     o.voice ? voiceSection() : null,
     h('h2', {}, 'Where suggestions were generated'),
@@ -279,7 +286,7 @@ export function mountControls(root, o) {
   async function saveBriefing() {
     const b = { ...formBriefing(), prepared: prepared.filter((q) => q.question.trim() || q.answer.trim()) };
     briefingDocName = b.documentName;
-    await o.briefing.set(b);
+    await o.briefing.set(b, { byUser: true });
     announce(b);
   }
   async function clearBriefing() {
@@ -293,7 +300,7 @@ export function mountControls(root, o) {
     closeConfirm();
     prepStatus.textContent = '';
     renderPrepared();
-    await o.briefing.set({});
+    await o.briefing.set({}, { byUser: true });
     announce({});
   }
 
@@ -468,9 +475,11 @@ export function mountControls(root, o) {
 
   // Saved at once, on this computer, with the briefing. The list on screen is
   // not rebuilt here, so the field being edited keeps the focus.
-  async function storePrepared() {
+  // `byUser`: the user typed or deleted an answer (the hosted demo needs to
+  // know when the briefing stops being the fictional sample).
+  async function storePrepared(byUser = false) {
     const b = { ...(await o.briefing.get()), prepared: prepared.filter((q) => q.question.trim() || q.answer.trim()) };
-    await o.briefing.set(b);
+    await o.briefing.set(b, { byUser });
     announce(b);
   }
 
@@ -482,8 +491,8 @@ export function mountControls(root, o) {
         const edit = (key) => (e) => {
           q[key] = e.target.value;
         };
-        const question = h('input', { type: 'text', value: q.question, maxlength: String(PREPARED_LIMITS.questionChars), oninput: edit('question'), onchange: storePrepared });
-        const answer = h('textarea', { rows: 2, maxlength: String(PREPARED_LIMITS.answerChars), oninput: edit('answer'), onchange: storePrepared }, q.answer);
+        const question = h('input', { type: 'text', value: q.question, maxlength: String(PREPARED_LIMITS.questionChars), oninput: edit('question'), onchange: () => storePrepared(true) });
+        const answer = h('textarea', { rows: 2, maxlength: String(PREPARED_LIMITS.answerChars), oninput: edit('answer'), onchange: () => storePrepared(true) }, q.answer);
         return h(
           'li',
           {},
@@ -507,7 +516,7 @@ export function mountControls(root, o) {
     renderPrepared();
     // Focus stays in the list: the next question, or "Add a question".
     (prepList.children[Math.min(i, prepared.length - 1)]?.querySelector('input') || prepAdd).focus();
-    await storePrepared();
+    await storePrepared(true);
     prepStatus.textContent = `Deleted. ${prepared.length} prepared answer${prepared.length === 1 ? '' : 's'} left.`;
   }
 
@@ -523,7 +532,11 @@ export function mountControls(root, o) {
   );
   put(panes.Memory, 
     h('h2', {}, 'What Pipe Up has learned'),
-    h('p', { class: 'muted' }, 'Your replies are stored only on this computer and used as examples of your style. Kept 90 days, 500 at most. Nothing you say out loud is recorded.'),
+    h(
+      'p',
+      { class: 'muted' },
+      `Stored only on this computer, for ${MEMORY_LIMITS.retentionDays} days and ${MEMORY_LIMITS.maxEvents} entries at most, and used as examples of your style. Each entry holds: the reply you sent, the suggestions that were shown, and up to ${MEMORY_LIMITS.keyWords} key words of the caption line it answered (shown below as "Key words"). No audio and no full caption sentence is kept. With "Don't learn from this call", nothing is added.`
+    ),
     rate,
     h('button', { onclick: () => (confirmRow.hidden = false) }, 'Delete everything'),
     confirmRow,
@@ -541,7 +554,8 @@ export function mountControls(root, o) {
           'li',
           {},
           h('div', { class: 'muted' }, `${ACTION_LABEL[e.action] || e.action} · ${new Date(e.ts).toLocaleString()}`),
-          e.context ? h('div', {}, '“' + e.context + '”') : null,
+          e.keys?.length ? h('div', { class: 'muted' }, 'Key words: ' + e.keys.join(', ')) : null,
+          e.shown?.length ? h('div', { class: 'muted' }, 'Suggestions shown: ' + e.shown.join(' · ')) : null,
           e.reply ? h('div', {}, '→ ', h('b', {}, e.reply)) : null,
           h('button', { class: 'link', onclick: async () => { await o.memory.remove(e.id); renderMemory(); } }, 'Delete')
         )
@@ -650,6 +664,9 @@ export function mountControls(root, o) {
     reportRun(res) {
       const used = res.usedPrepared ? ' · used your prepared answer' : res.hasBriefing ? ' · used your briefing' : '';
       addLog(res.route, ` ${res.ms} ms${res.headStartMs ? ` (started ${res.headStartMs} ms before the pause)` : ''}`, res.reason + used);
+      // The note stays until a later request goes through.
+      cloudNote.hidden = !res.cloudProblem;
+      cloudNote.textContent = CLOUD_PROBLEM_TEXT[res.cloudProblem] || '';
       if (current === 'Memory') renderMemory();
     },
     /** Opens the Briefing tab on "Prepare for the call". False when there is no briefing yet. */

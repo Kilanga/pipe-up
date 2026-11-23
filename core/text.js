@@ -41,13 +41,14 @@ function stem(w) {
 /**
  * Ranks documents against a query with TF-IDF cosine similarity.
  * @param {string} query
- * @param {Array<{id:any,text:string}>} docs
+ * @param {Array<{id:any,text?:string,tokens?:string[]}>} docs
  * @returns {Array<{id:any,score:number}>} sorted best first, score > 0 only
  */
 export function rank(query, docs) {
   const q = tokenize(query);
   if (!q.length || !docs.length) return [];
-  const tokenized = docs.map((d) => tokenize(d.text));
+  // A document may come as text or as key words already made by tokenize().
+  const tokenized = docs.map((d) => d.tokens || tokenize(d.text));
   const df = new Map();
   for (const toks of tokenized) for (const t of new Set(toks)) df.set(t, (df.get(t) || 0) + 1);
   const n = docs.length;
@@ -76,6 +77,18 @@ export function rank(query, docs) {
 export function similarity(a, b) {
   const r = rank(a, [{ id: 0, text: b }]);
   return r.length ? r[0].score : 0;
+}
+
+/**
+ * How much of `text` is made of words found in `source`: the number of
+ * shared key words and their share of the key words of `text`.
+ */
+export function overlap(text, source) {
+  const words = new Set(tokenize(text));
+  const known = new Set(tokenize(source));
+  let shared = 0;
+  for (const w of words) if (known.has(w)) shared++;
+  return { shared, ratio: words.size ? shared / words.size : 0 };
 }
 
 export function wordCount(text) {

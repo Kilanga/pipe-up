@@ -1,8 +1,13 @@
-import { rank, similarity } from './text.js';
+import { rank, tokenize } from './text.js';
 
-// Local learning: every reply the user picks, types or says themselves is
-// stored on the device and the closest ones become examples in the prompt.
+// Local learning: every reply the user picks or types is stored on the
+// device and the closest ones become examples in the prompt.
 // Nothing here ever leaves the device.
+//
+// What was said in the call is not stored: of the line being answered, only
+// a few key words are kept (lower case, common words removed), which is all
+// the lookup needs. The line can be a colleague's or, in on-demand mode, the
+// user's own.
 
 export const ACTIONS = {
   PICKED: 'picked', // chose suggestion 1, 2 or 3
@@ -13,13 +18,18 @@ export const ACTIONS = {
   DISMISSED: 'dismissed', // Esc on all suggestions
 };
 
-export const LIMITS = { maxEvents: 500, retentionDays: 90, contextChars: 300 };
+export const LIMITS = { maxEvents: 500, retentionDays: 90, contextChars: 300, keyWords: 20 };
+
+/** The key words kept from the line being answered: no sentence, no order of speech beyond these words. */
+export function keyWords(context) {
+  return [...new Set(tokenize(String(context || '').slice(0, LIMITS.contextChars)))].slice(0, LIMITS.keyWords);
+}
 
 export function makeEvent({ context, action, reply = '', shown = [], choice = null, now = Date.now() }) {
   return {
     id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
     ts: now,
-    context: String(context || '').slice(0, LIMITS.contextChars),
+    keys: keyWords(context),
     action,
     reply: String(reply || '').slice(0, 300),
     shown: shown.slice(0, 3).map((s) => String(s).slice(0, 200)),
@@ -27,17 +37,30 @@ export function makeEvent({ context, action, reply = '', shown = [], choice = nu
   };
 }
 
+/**
+ * Entries saved by versions up to 0.3.1 held the sentence being answered.
+ * It is replaced by its key words; returns true when the entry changed.
+ */
+export function migrateEvent(e) {
+  if (Array.isArray(e.keys) && !('context' in e)) return false;
+  e.keys = Array.isArray(e.keys) ? e.keys : keyWords(e.context);
+  delete e.context;
+  return true;
+}
+
 /** In-memory store, used by tests and as the base for persistent stores. */
 export class MemoryStore {
   constructor(events = []) {
     this.events = events;
+    this.events.forEach(migrateEvent);
+    this.prune(); // the limits also apply to what is loaded, not only on write
   }
   async all() {
     return [...this.events];
   }
   async add(event) {
     this.events.push(event);
-    await this.prune();
+    this.prune();
   }
   async remove(id) {
     this.events = this.events.filter((e) => e.id !== id);
@@ -45,7 +68,7 @@ export class MemoryStore {
   async clear() {
     this.events = [];
   }
-  async prune(now = Date.now()) {
+  prune(now = Date.now()) {
     const cutoff = now - LIMITS.retentionDays * 86400000;
     this.events = this.events.filter((e) => e.ts >= cutoff).slice(-LIMITS.maxEvents);
   }
@@ -77,9 +100,20 @@ export class IdbMemoryStore extends MemoryStore {
       tx.onerror = () => reject(tx.error);
     });
   }
+  // On load: old entries lose their sentence, and entries past the limits
+  // (90 days, 500) are deleted from the disk too, not only hidden.
   async #load() {
-    const req = await this.#tx('readonly', (s) => s.getAll());
-    this.events = (req || []).sort((a, b) => a.ts - b.ts);
+    const stored = (await this.#tx('readonly', (s) => s.getAll())) || [];
+    this.events = stored.sort((a, b) => a.ts - b.ts);
+    const changed = this.events.filter(migrateEvent);
+    this.prune();
+    const kept = new Set(this.events.map((e) => e.id));
+    const gone = stored.filter((e) => !kept.has(e.id));
+    if (!changed.length && !gone.length) return;
+    await this.#tx('readwrite', (s) => {
+      for (const e of changed) if (kept.has(e.id)) s.put(e);
+      for (const e of gone) s.delete(e.id);
+    });
   }
   async all() {
     await this.ready;
@@ -109,24 +143,24 @@ export class IdbMemoryStore extends MemoryStore {
 
 const ANSWERS = new Set([ACTIONS.PICKED, ACTIONS.EDITED, ACTIONS.TYPED, ACTIONS.SPOKE]);
 
-/** The k past replies whose context is closest to what was just said. */
+/** The k past replies whose key words are closest to what was just said. */
 export function similarExamples(events, utterance, k = 3, minScore = 0.1) {
   const usable = events.filter((e) => ANSWERS.has(e.action) && e.reply);
   const byId = new Map(usable.map((e) => [e.id, e]));
   return rank(
     utterance,
-    usable.map((e) => ({ id: e.id, text: e.context }))
+    usable.map((e) => ({ id: e.id, tokens: e.keys || [] }))
   )
     .filter((r) => r.score >= minScore)
     .slice(0, k)
-    .map((r) => ({ context: byId.get(r.id).context, reply: byId.get(r.id).reply }));
+    .map((r) => ({ keys: byId.get(r.id).keys, reply: byId.get(r.id).reply }));
 }
 
 /** Suggestions the user already ignored in a very similar context. */
 export function ignoredSuggestions(events, utterance, threshold = 0.6) {
   const out = new Set();
   for (const e of events) {
-    if (!e.shown?.length || similarity(utterance, e.context) < threshold) continue;
+    if (!e.shown?.length || (rank(utterance, [{ id: 0, tokens: e.keys || [] }])[0]?.score || 0) < threshold) continue;
     e.shown.forEach((s, i) => {
       if (e.choice !== i + 1 && s !== e.reply) out.add(s);
     });

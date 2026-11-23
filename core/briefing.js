@@ -1,4 +1,4 @@
-import { rank } from './text.js';
+import { rank, overlap } from './text.js';
 
 // A briefing is what the user prepared before the call: typed notes,
 // an uploaded document, or both, plus a short list of "my positions".
@@ -112,4 +112,21 @@ export function retrieveBriefing(index, utterance, { maxChunks = 2, maxPositions
     .slice(0, maxChunks)
     .map((r) => byId.get(r.id));
   return { chunks, positions, prepared };
+}
+
+/** The texts of a retrieved briefing, as they are given to a model. */
+export function briefingTexts(b) {
+  return [...(b?.positions || []), ...(b?.prepared || []).map((q) => q.answer), ...(b?.chunks || []).map((c) => c.text)];
+}
+
+/**
+ * True when a reply really draws on one of these briefing texts: at least
+ * two key words in common, and at least half of the reply's key words.
+ * A model's own "this comes from the briefing" is not taken on trust.
+ */
+export function restsOnBriefing(reply, texts) {
+  return texts.some((t) => {
+    const { shared, ratio } = overlap(reply, t);
+    return shared >= 2 && ratio >= 0.5;
+  });
 }
