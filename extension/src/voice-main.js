@@ -40,10 +40,18 @@
     addEventListener(t, () => ctx && ctx.state !== 'running' && ctx.resume().catch(() => {}), { capture: true });
 
   // Meet reads the track's label, settings and constraints and may change
-  // them (microphone switch, noise settings): forward all of it to the real one.
-  function mirror(mixed, real) {
+  // them (microphone switch, noise settings): forward all of it to the real
+  // one. Muting in Meet turns `enabled` off: that must silence Pipe Up's
+  // voice too, at once, even in the middle of a reply.
+  function mirror(mixed, real, voice) {
     const def = (k, d) => Object.defineProperty(mixed, k, { configurable: true, ...d });
-    def('enabled', { get: () => real.enabled, set: (v) => (real.enabled = v) });
+    def('enabled', {
+      get: () => real.enabled,
+      set: (v) => {
+        real.enabled = v;
+        ramp(voice, v ? 1 : 0);
+      },
+    });
     def('label', { get: () => real.label });
     def('muted', { get: () => real.muted });
     mixed.getSettings = () => real.getSettings();
@@ -67,10 +75,11 @@
       const mic = c.createGain();
       const voice = c.createGain();
       const dst = c.createMediaStreamDestination();
+      voice.gain.value = real.enabled ? 1 : 0;
       src.connect(mic).connect(dst);
       bus.connect(voice).connect(dst);
       const mixed = dst.stream.getAudioTracks()[0];
-      mirror(mixed, real);
+      mirror(mixed, real, voice);
       const entry = { mic, voice, real };
       const teardown = () => {
         if (!mixes.delete(entry)) return;
@@ -113,26 +122,38 @@
       return status(false, 'needs-click');
     }
     if (!live.some((m) => m.real.enabled)) return status(false, 'muted');
-    const { pcm, rate } = e.data;
+    // Audio that cannot be played is reported, not accepted: in "voice only"
+    // mode the reply then goes to the chat instead of being lost.
+    let buf;
+    try {
+      const { pcm, rate } = e.data;
+      buf = ctx.createBuffer(1, pcm.length, rate);
+      buf.copyToChannel(pcm, 0);
+    } catch {
+      return status(false, 'bad-audio');
+    }
     status(true);
     // One reply at a time: a second one waits for the first to finish.
-    queue = queue.then(
-      () =>
-        new Promise((done) => {
-          const id = ++playId;
-          const buf = ctx.createBuffer(1, pcm.length, rate);
-          buf.copyToChannel(pcm, 0);
-          const s = ctx.createBufferSource();
+    // Whatever happens to one reply, the next ones are still played.
+    const play = () =>
+      new Promise((done) => {
+        const id = ++playId;
+        const s = ctx.createBufferSource();
+        const end = () => {
+          s.disconnect();
+          if (id === playId) for (const m of mixes) ramp(m.mic, 1);
+          done();
+        };
+        try {
           s.buffer = buf;
           s.connect(bus);
           for (const m of live) ramp(m.mic, 0);
-          s.onended = () => {
-            s.disconnect();
-            if (id === playId) for (const m of mixes) ramp(m.mic, 1);
-            done();
-          };
+          s.onended = end;
           s.start(ctx.currentTime + 0.03);
-        })
-    );
+        } catch {
+          end();
+        }
+      });
+    queue = queue.then(play, play);
   });
 })();

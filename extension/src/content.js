@@ -136,6 +136,7 @@ const VOICE_PROBLEMS = {
   'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
   reload: 'The voice was set up after you joined: reload this Meet tab to use it.',
   'no-mic': 'Join the call with your microphone on, then Pipe Up can speak for you.',
+  'bad-audio': 'The voice could not read this reply.',
 };
 window.addEventListener('message', (e) => {
   if (e.source !== window || e.origin !== location.origin || e.data?.type !== 'pipe-up:pcm-status') return;

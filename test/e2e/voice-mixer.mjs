@@ -24,4 +24,43 @@ for (const flag of ['off','on']) {
   }, flag);
   console.log(flag, JSON.stringify(r)); await ctx.close();
 }
+// Muting in Meet must silence the voice at once, and audio that cannot be
+// played must be reported without blocking the replies that follow.
+{
+  const ctx = await b.newContext({ permissions:['microphone'] }); const page = await ctx.newPage();
+  await page.addInitScript((vm) => { eval(vm); }, vm);
+  await page.goto('http://localhost:8127/');
+  const r = await page.evaluate(async () => {
+    document.documentElement.dataset.pipeUpVoice = 'on';
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const t = s.getAudioTracks()[0];
+    // What the call receives: the level of the track handed to Meet.
+    const ac = new AudioContext(); const an = ac.createAnalyser(); an.fftSize = 2048;
+    ac.createMediaStreamSource(new MediaStream([t])).connect(an);
+    const level = () => { const d = new Float32Array(an.fftSize); an.getFloatTimeDomainData(d); return Math.round(1000 * d.reduce((m, v) => Math.max(m, Math.abs(v)), 0)) / 1000; };
+    const wait = (ms) => new Promise(res => setTimeout(res, ms));
+    const st = (pcm, rate = 22050) => new Promise(res => { const h = e => { if (e.data?.type==='pipe-up:pcm-status') { removeEventListener('message', h); res(e.data); } }; addEventListener('message', h); window.postMessage({ type:'pipe-up:pcm', pcm, rate }, location.origin); });
+    const tone = (seconds) => new Float32Array(22050 * seconds).map((_, i) => Math.sin(i/10)*0.5);
+    const out = {};
+    out.accepted = await st(tone(3));
+    await wait(700); out.speaking = level();
+    t.enabled = false; await wait(300); out.mutedWhileSpeaking = level();
+    t.enabled = true; await wait(300); out.unmuted = level();
+    await wait(2200);
+    out.empty = await st(new Float32Array(0));
+    out.notAudio = await st('not audio');
+    out.badRate = await st(tone(1), 0);
+    out.next = await st(tone(1));
+    await wait(500); out.nextLevel = level();
+    return out;
+  });
+  const ok = (n, c, x = '') => console.log(`${c ? 'OK  ' : 'FAIL'} ${n} ${x}`);
+  ok('voice reaches the call', r.accepted.ok && r.speaking > 0.1, 'level ' + r.speaking);
+  ok('muting in Meet silences the voice during a reply', r.mutedWhileSpeaking < 0.005, 'level ' + r.mutedWhileSpeaking);
+  ok('unmuting brings the voice back', r.unmuted > 0.1, 'level ' + r.unmuted);
+  ok('empty audio is refused', r.empty.ok === false && r.empty.reason === 'bad-audio', JSON.stringify(r.empty));
+  ok('invalid audio is refused', r.notAudio.ok === false && r.badRate.ok === false, JSON.stringify([r.notAudio, r.badRate]));
+  ok('the next reply is still played', r.next.ok === true && r.nextLevel > 0.1, 'level ' + r.nextLevel);
+  await ctx.close();
+}
 await b.close(); srv.close();
