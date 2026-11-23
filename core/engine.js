@@ -7,7 +7,7 @@ import { REMOTE_DEFAULTS, FALLBACK_REPLIES } from './config.js';
 import { buildPrompt, parseReplies, partialReplies, systemRules, RESPONSE_JSON_SCHEMA } from './prompt.js';
 import { retrieveBriefing, briefingTexts, restsOnBriefing } from './briefing.js';
 import { similarExamples, ignoredSuggestions } from './memory.js';
-import { PREP_JSON_SCHEMA, prepRules, planPreparation, buildPrepPrompt, parsePrepared, mergePrepared } from './prepare.js';
+import { PREP_JSON_SCHEMA, PREP_LIMITS, prepRules, planPreparation, buildPrepPrompt, parsePrepared, mergePrepared, numbersAreFromBriefing } from './prepare.js';
 import { similarity } from './text.js';
 
 const LANG = [{ type: 'text', languages: ['en'] }];
@@ -21,8 +21,11 @@ const LANG = [{ type: 'text', languages: ['en'] }];
  * It relies on the provider methods the SDK itself calls (`initialize`,
  * `getToken`; checked in @firebase/app-check 0.13.1) and is covered by
  * test/e2e/network.mjs.
+ * A token that does not come within `timeoutMs` is an error: when the
+ * reCAPTCHA script is blocked (content blocker, network), its promise never
+ * settles and the cloud request would wait for ever.
  */
-export function lazyAppCheckProvider(make) {
+export function lazyAppCheckProvider(make, { timeoutMs = 10000 } = {}) {
   let app = null;
   let real = null;
   const self = {
@@ -34,7 +37,11 @@ export function lazyAppCheckProvider(make) {
         real = make();
         real.initialize(app);
       }
-      return real.getToken(limitedUse);
+      let timer;
+      const late = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`App Check did not answer in ${timeoutMs / 1000} s (reCAPTCHA may be blocked)`)), timeoutMs);
+      });
+      return Promise.race([real.getToken(limitedUse), late]).finally(() => clearTimeout(timer));
     },
     isEqual: (other) => other === self,
   };
@@ -56,10 +63,19 @@ export async function initFirebase({ firebaseConfig, appCheck = {} }) {
     initializeAppCheck(app, { provider: appCheck.provider, isTokenAutoRefreshEnabled: false });
   } else if (appCheck.debugToken) {
     globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN = appCheck.debugToken;
-    initializeAppCheck(app, {
-      provider: new CustomProvider({ getToken: () => Promise.reject(new Error('Debug token only')) }),
-      isTokenAutoRefreshEnabled: false,
-    });
+    // The SDK prints the debug token with console.log when it starts in
+    // debug mode. It is the user's secret: that one line is not printed.
+    // console.log is put back right after (the SDK prints from a promise).
+    const log = console.log;
+    console.log = (...a) => (typeof a[0] === 'string' && a[0].startsWith('Firebase App Check debug token') ? undefined : log.apply(console, a));
+    try {
+      initializeAppCheck(app, {
+        provider: new CustomProvider({ getToken: () => Promise.reject(new Error('Debug token only')) }),
+        isTokenAutoRefreshEnabled: false,
+      });
+    } finally {
+      setTimeout(() => (console.log = log), 0);
+    }
   }
   const remote = { ...REMOTE_DEFAULTS };
   try {
@@ -119,11 +135,30 @@ export function cloudProblem(e) {
 }
 
 const abortError = () => new DOMException('The request was cancelled', 'AbortError');
-const isAbort = (e, signal) => Boolean(signal?.aborted) || e?.name === 'AbortError';
+// Cancelled means: our own signal was aborted. An AbortError without that is
+// the SDK's own timeout (180 s), which is a failure, not a cancellation.
+const isAbort = (e, signal) => Boolean(signal?.aborted);
+const isTimeout = (e) => e?.name === 'AbortError';
+
+/**
+ * The promise, or an AbortError as soon as the signal aborts. The SDK only
+ * listens to the signal once the request is on its way: before that (while
+ * it waits for an App Check token) a cancellation would not be noticed.
+ */
+function orAbort(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const stop = () => reject(abortError());
+    if (signal.aborted) stop();
+    else signal.addEventListener('abort', stop, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+  });
+}
 
 export class SuggestionEngine {
   #deviceReady = false; // Gemini Nano answered "available": not asked again until an error
   #tails = {}; // last on-device call per model family, see #onDevice
+  #warming = null; // AbortController of the warm-up in progress
 
   /**
    * @param {object} o
@@ -201,11 +236,14 @@ export class SuggestionEngine {
     };
     this.prepDeviceParams = onDeviceParams;
     // The fourth hybrid mode, for the work done before the call:
-    // - PREFER_IN_CLOUD: after an explicit click, a cloud model reads the
-    //   whole briefing in one request. If the cloud cannot be reached and
+    // - PREFER_IN_CLOUD: after an explicit click, a cloud model reads a
+    //   short briefing in one request. If the cloud cannot be reached and
     //   Gemini Nano is there, the SDK does it on the device instead; the
     //   log shows the route that was really taken (inferenceSource).
     this.prepCloudModel = this.createModel({ mode: InferenceMode.PREFER_IN_CLOUD, onDeviceParams, inCloudParams });
+    // - ONLY_IN_CLOUD for a long briefing: falling back would hand Gemini
+    //   Nano the whole text in one request, more than it can read.
+    this.prepCloudOnlyModel = this.createModel({ mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
     // - ONLY_ON_DEVICE: the same work on Gemini Nano, part by part.
     this.prepDeviceModel = this.createModel({ mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams, inCloudParams });
   }
@@ -240,34 +278,51 @@ export class SuggestionEngine {
    * It reads it late (after creating a session), so calls of one family run
    * strictly one after the other: a cancelled call ends before the next one
    * places its own signal.
+   * The caller hears of a cancellation at once (orAbort); the next call of
+   * the family still waits until this one has really ended.
    */
-  async #onDevice(family, params, signal, call) {
+  #onDevice(family, params, signal, call) {
     const before = this.#tails[family];
-    let release;
-    this.#tails[family] = new Promise((r) => (release = r));
-    try {
+    const run = (async () => {
       await before;
       if (signal?.aborted) throw abortError();
       params.promptOptions = { ...params.promptOptions, signal };
       return await call();
-    } finally {
-      release();
-    }
+    })();
+    this.#tails[family] = run.catch(() => {});
+    return orAbort(run, signal);
+  }
+
+  /**
+   * A cancelled device call did not end (stuck model): later calls must not
+   * wait behind it, and Chrome is asked again whether the model is usable.
+   */
+  releaseDevice() {
+    this.#tails = {};
+    this.#deviceReady = false;
   }
 
   /**
    * Loads Gemini Nano into memory before the first real question, so the
    * first suggestion takes seconds instead of ~20 s. Never uses the cloud.
+   * It gives way to a real question: suggest() cancels it (the model that
+   * Chrome started loading stays loaded).
    */
   async warmUp() {
     if (this.warmed || (await this.#status()) !== 'available') return;
     this.warmed = true;
     const prompt = buildPrompt({ lines: [{ speaker: 'Other person', text: 'Hello, can you hear me?' }] });
+    const ctl = (this.#warming = new AbortController());
     try {
-      await this.#onDevice('suggest', this.onDeviceParams, undefined, () => this.deviceModel.generateContent(prompt));
+      await this.#onDevice('suggest', this.onDeviceParams, ctl.signal, () => this.deviceModel.generateContent(prompt));
     } catch {
-      this.warmed = false;
-      this.#deviceReady = false;
+      // Cancelled for a real question: not a failure of the model.
+      if (!ctl.signal.aborted) {
+        this.warmed = false;
+        this.#deviceReady = false;
+      }
+    } finally {
+      if (this.#warming === ctl) this.#warming = null;
     }
   }
 
@@ -300,23 +355,26 @@ export class SuggestionEngine {
         route: final.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device',
       };
     };
-    return mayUseDevice ? this.#onDevice('suggest', this.onDeviceParams, signal, stream) : stream();
+    return mayUseDevice ? this.#onDevice('suggest', this.onDeviceParams, signal, stream) : orAbort(stream(), signal);
   }
 
   /**
    * "Prepare for the call": turns the briefing into likely questions with a
    * short answer each.
-   * - target 'cloud': one request in PREFER_IN_CLOUD mode. The caller asks
-   *   for an explicit confirmation first; the standing cloud settings are
-   *   neither needed nor changed. The Remote Config kill switch applies.
+   * - target 'cloud': one request. PREFER_IN_CLOUD for a short briefing
+   *   (Gemini Nano takes over if the cloud cannot be reached), ONLY_IN_CLOUD
+   *   above PREP_LIMITS.cloudFallbackWords words. The caller asks for an
+   *   explicit confirmation first; the standing cloud settings are neither
+   *   needed nor changed. The Remote Config kill switch applies.
    * - target 'device': Gemini Nano, one request per part of the briefing.
    * @param {object} briefing the saved briefing (positions, notes, documentText)
    * @param {object} o
    * @param {'cloud'|'device'} o.target
    * @param {(done:number, total:number) => void} [o.onProgress]
    * @param {AbortSignal} [o.signal]
-   * @returns {Promise<{items:Array<{question:string,answer:string}>, route:string, ms:number, words:number, total:number, shortened:boolean, parts:number, dropped:number}>}
-   * @throws {Error} with `code`: 'empty' | 'cloud-off' | 'no-device' | 'cancelled' | 'failed'
+   * @returns {Promise<{items:Array<{question:string,answer:string}>, route:string, mode:string, ms:number, words:number, total:number, shortened:boolean, parts:number, dropped:number}>}
+   *          `mode` is the hybrid mode that was asked for, `route` where it really ran
+   * @throws {Error} with `code`: 'empty' | 'cloud-off' | 'no-device' | 'cancelled' | 'failed' (and `mode` once a model was chosen)
    */
   async prepare(briefing, { target, onProgress, signal } = {}) {
     const t0 = performance.now();
@@ -326,7 +384,9 @@ export class SuggestionEngine {
     if (target === 'cloud' && !this.remote.cloud_enabled) throw fail('cloud-off', 'The cloud is switched off');
     if (target === 'device' && (await this.#status()) !== 'available') throw fail('no-device', 'Gemini Nano is not available');
     this.#buildPrepModels();
-    const model = target === 'cloud' ? this.prepCloudModel : this.prepDeviceModel;
+    const cloudOnly = target === 'cloud' && plan.words > PREP_LIMITS.cloudFallbackWords;
+    const model = target !== 'cloud' ? this.prepDeviceModel : cloudOnly ? this.prepCloudOnlyModel : this.prepCloudModel;
+    const mode = target !== 'cloud' ? 'ONLY_ON_DEVICE' : cloudOnly ? 'ONLY_IN_CLOUD' : 'PREFER_IN_CLOUD';
     const lists = [];
     let dropped = 0;
     let route = null;
@@ -335,9 +395,10 @@ export class SuggestionEngine {
       const part = plan.parts.length > 1 ? { index: i + 1, count: plan.parts.length } : null;
       const prompt = buildPrepPrompt(text, { maxItems: plan.perPart, part });
       try {
-        // Both models may run on Gemini Nano (PREFER_IN_CLOUD falls back to
-        // it), so the signal is given both ways.
-        const { response } = await this.#onDevice('prepare', this.prepDeviceParams, signal, () => model.generateContent(prompt, signal ? { signal } : undefined));
+        // PREFER_IN_CLOUD may run on Gemini Nano too (it falls back to it),
+        // so the signal is given both ways.
+        const send = () => model.generateContent(prompt, signal ? { signal } : undefined);
+        const { response } = await (cloudOnly ? orAbort(send(), signal) : this.#onDevice('prepare', this.prepDeviceParams, signal, send));
         route = response.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device';
         const parsed = parsePrepared(response.text(), { maxItems: plan.perPart, briefing: text });
         if (parsed) {
@@ -349,14 +410,15 @@ export class SuggestionEngine {
       } catch (e) {
         if (isAbort(e, signal)) throw fail('cancelled', 'Preparation stopped');
         if (target === 'device') this.#deviceReady = false;
-        lastError = e;
+        lastError = isTimeout(e) ? new Error('no answer in time') : e;
       }
       onProgress?.(i + 1, plan.parts.length);
     }
-    if (!lists.length) throw Object.assign(fail('failed', String(lastError?.message || lastError)), { cause: lastError });
+    if (!lists.length) throw Object.assign(fail('failed', String(lastError?.message || lastError)), { cause: lastError, mode });
     return {
       items: mergePrepared(lists),
       route,
+      mode,
       ms: Math.round(performance.now() - t0),
       words: plan.words,
       total: plan.total,
@@ -377,6 +439,7 @@ export class SuggestionEngine {
   async suggest(lines, { onPartial, signal, deviceOnly = false } = {}) {
     const t0 = performance.now();
     const utterance = lines.at(-1)?.text || '';
+    this.#warming?.abort(); // a real question does not wait behind the warm-up
     const settings = this.getSettings();
     const wanted = this.#wantedMaxWords();
     if (wanted !== this.maxWords) {
@@ -394,20 +457,25 @@ export class SuggestionEngine {
     // the prepared answer is from the briefing, whatever label the model
     // gave it; otherwise the model's own claim is checked against the
     // briefing material it was given: the reply must share words with it.
+    // In both cases every number in the reply must be written in that
+    // material: "90k" is not from a briefing that says "40k".
     const material = briefingTexts(briefing);
     const tagged = (replies) =>
       replies.map((r) => {
-        if (prepared && fromPrepared(r)) return { ...r, source: 'briefing' };
-        return r.source === 'briefing' && !restsOnBriefing(r.text, material) ? { ...r, source: 'general' } : r;
+        const rests = (prepared && fromPrepared(r)) || (r.source === 'briefing' && restsOnBriefing(r.text, material));
+        return { ...r, source: rests && numbersAreFromBriefing(r.text, material.join('\n')) ? 'briefing' : 'general' };
       });
     // No model may read the briefing here: the prepared answer is offered as
     // it is, ahead of the other replies. This is a lookup on this computer.
+    // (It was checked like a reply when the briefing was loaded: length and
+    // links, see cleanPrepared in core/briefing.js.)
     const preparedFirst = (replies) =>
       prepared ? [{ text: prepared.answer, source: 'briefing' }, ...replies.filter((r) => !fromPrepared(r))].slice(0, 3) : replies;
     const basic = () => (prepared ? preparedFirst(FALLBACK_REPLIES.slice(1)) : FALLBACK_REPLIES);
     const basicWords = prepared ? 'your prepared answer and basic replies' : 'basic replies';
 
-    const done = (replies, route, reason, usedBriefing, error) => ({
+    let deviceDetail; // the model's own error text: for the log's tooltip, not for the screen
+    const done = (replies, route, reason, usedBriefing, error = deviceDetail) => ({
       replies,
       route,
       reason,
@@ -439,7 +507,8 @@ export class SuggestionEngine {
         } catch (e) {
           if (isAbort(e, signal)) return cancelled();
           this.#deviceReady = false; // ask Chrome again before the next request
-          deviceProblem = 'Gemini Nano error: ' + (e?.message || e);
+          deviceProblem = isTimeout(e) ? 'Gemini Nano gave no answer in time' : 'Gemini Nano error';
+          deviceDetail = String(e?.message || e);
           break;
         }
       }
@@ -475,8 +544,16 @@ export class SuggestionEngine {
       return done(basic(), 'fallback', `${deviceProblem}; cloud answer unreadable: ${basicWords}`, Boolean(prepared));
     } catch (e) {
       if (isAbort(e, signal)) return cancelled();
+      const detail = String(e?.message || e);
+      // PREFER_ON_DEVICE runs on the device when Chrome says the model is
+      // there (it may have arrived since we asked): then the failure is the
+      // device's, not the cloud's.
+      if (!forced && (await this.getDeviceStatus()) === 'available') {
+        return done(basic(), 'fallback', `Gemini Nano error on this computer: ${basicWords}`, Boolean(prepared), detail);
+      }
       // `cloudProblem` lets the interface say calmly what happened.
-      return { ...done(basic(), 'fallback', `${deviceProblem}; cloud error: ${basicWords}`, Boolean(prepared), String(e?.message || e)), cloudProblem: cloudProblem(e) };
+      const what = isTimeout(e) ? 'the cloud gave no answer in time' : 'cloud error';
+      return { ...done(basic(), 'fallback', `${deviceProblem}; ${what}: ${basicWords}`, Boolean(prepared), detail), cloudProblem: cloudProblem(e) };
     }
   }
 }

@@ -4,8 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { InferenceMode } from 'firebase/ai';
 import { fakeEngine, repliesJson } from './fakes.js';
-import { MemoryStore, makeEvent, migrateEvent, similarExamples, ignoredSuggestions, LIMITS } from '../core/memory.js';
-import { buildPrompt, parseReplies, partialReplies, cleanReply, systemRules, LIMITS as PROMPT_LIMITS } from '../core/prompt.js';
+import { MemoryStore, makeEvent, migrateEvent, keyWords, similarExamples, ignoredSuggestions, LIMITS } from '../core/memory.js';
+import { prepRules } from '../core/prepare.js';
+import { buildPrompt, parseReplies, partialReplies, cleanReply, hasForeignLink, systemRules, LIMITS as PROMPT_LIMITS } from '../core/prompt.js';
 import { restsOnBriefing } from '../core/briefing.js';
 import { buildBriefingIndex } from '../core/briefing.js';
 import { cloudProblem, lazyAppCheckProvider } from '../core/engine.js';
@@ -21,6 +22,17 @@ test('memory: the sentence being answered is not stored, only its key words', ()
   assert.deepEqual(e.keys, ['sam', 'penalty', 'clause', 'vendor', 'contract', 'signed', 'yet']);
   const long = makeEvent({ context: Array.from({ length: 80 }, (_, i) => 'word' + i).join(' '), action: 'typed', reply: 'x' });
   assert.ok(long.keys.length <= LIMITS.keyWords);
+});
+
+test('memory: a key word is bounded and is never a number (phone, account, amount)', async () => {
+  const keys = keyWords('Call me on 0612345678 or 06-12-34-56-78, account FR7630006000011234567890189, about the Q3 budget of 40000 euros for ' + 'x'.repeat(60));
+  assert.ok(keys.includes('budget') && keys.includes('q3') && keys.includes('euro'), keys.join(' '));
+  assert.ok(keys.every((k) => k.length <= LIMITS.keyWordChars), keys.join(' '));
+  assert.ok(keys.every((k) => (k.match(/\d/g) || []).length * 2 <= k.length), keys.join(' '));
+  assert.doesNotMatch(keys.join(' '), /0612345678|7630006|40000/);
+  // Key words stored by 0.4.0 pre-releases are brought to the same rules on load.
+  const store = new MemoryStore([{ id: '1', ts: Date.now(), keys: ['budget', '0612345678', 'y'.repeat(80)], action: 'typed', reply: 'ok', shown: [] }]);
+  assert.deepEqual((await store.all())[0].keys, ['budget', 'y'.repeat(LIMITS.keyWordChars)]);
 });
 
 test('memory: "learns your phrasing" still works from key words', () => {
@@ -97,6 +109,8 @@ test('prompt: the cloud route gets neutral labels, never display names', async (
 test('prompt: English is the declared language, in the rules too', () => {
   assert.match(systemRules(), /Reply in English\./);
   assert.doesNotMatch(systemRules(), /same language/);
+  assert.match(prepRules(), /Write in English\./);
+  assert.doesNotMatch(prepRules(), /language of the briefing/);
 });
 
 test('replies: capped in characters, not only in words', () => {
@@ -126,6 +140,25 @@ test('replies: a link or an e-mail address that is not in the briefing is droppe
   assert.deepEqual(parseReplies(out, { hasBriefing: true }).map((r) => r.text), ['Which file do you mean?', 'Let me check.']);
 });
 
+test('replies: links in disguise are dropped too, ordinary sentences are kept', () => {
+  const bad = ['see https://evil.example/x', 'go to evil.example now', 'visit evil dot com please', 'evil[.]com', 'evil\u2024com', 'evil\u3002com', 'xn--80ak6aa92e.com', '\u0430\u0440\u0440\u04cf\u0435.com', 'bit.ly/abc', 'evil.fr', 'evil.zip', 'evil.ai', 'e\u200bvil.com', 'evil.\u200bcom', '[click](evil.example)', '[x](javascript:alert(1))', 'hxxp://evil.com', '1.2.3.4/login', '\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d', 'mail me a@b.co', 't.me/evil', 'EVIL.COM', 'evil.com.', 'ftp://evil.com', 'evil.com:8080'];
+  for (const t of bad) assert.equal(cleanReply(t), null, JSON.stringify(t));
+  const good = ['Let me check and get back to you.', 'Yes, at 3 p.m. on Friday.', 'I agree, e.g. for the budget.', 'The budget is 40.5k euros, i.e. unchanged.', 'Version 2.1 ships in March.', 'It costs 1.200,50 euros.', 'Could you say more about that?', "I'm still speaking, one moment.", 'We meet at 10.30 a.m. in the U.S. office.', 'Yes... let me think.', 'OK. Then we sign.', 'Mr. Smith agreed. No change.', 'Put a dot on the map.'];
+  for (const t of good) assert.equal(cleanReply(t), t);
+  assert.equal(cleanReply('Yes\u2026 let me think.'), 'Yes\u2026 let me think.', 'the text itself is not rewritten');
+  assert.equal(cleanReply('Ye\u200bs, it is signed.'), 'Yes, it is signed.', 'invisible characters are removed');
+});
+
+test('replies: a link is allowed only if the briefing holds that very link, not a text that contains it', () => {
+  const briefing = 'Write to bob@devil.com. The doc is at https://www.example.test/a/b.';
+  assert.equal(hasForeignLink('See evil.com.', briefing), true, 'evil.com is not "in" bob@devil.com');
+  assert.equal(hasForeignLink('See devil.com.', briefing), true, 'the domain of an e-mail address is not a link the briefing gave');
+  assert.equal(hasForeignLink('Write to bob@devil.com!', briefing), false);
+  assert.equal(hasForeignLink('It is on example.test.', briefing), false, 'the host of a web address of the briefing');
+  assert.equal(hasForeignLink('It is on example.test/other.', briefing), true);
+  assert.equal(hasForeignLink('No link here.', ''), false);
+});
+
 test('replies: the same limits apply while the answer is still streaming', () => {
   const longReply = Array.from({ length: 80 }, (_, i) => 'word' + i).join(' ');
   const [first] = partialReplies('{"replies":[{"text":"' + longReply + '","source":"general"}', { maxWords: 12 });
@@ -148,6 +181,19 @@ test('"From your briefing" needs real overlap with the briefing, not the model\'
   assert.deepEqual(res.replies.map((r) => r.source), ['general', 'briefing', 'general']);
 });
 
+test('"From your briefing" also needs every number of the reply to be in the briefing', async () => {
+  const briefing = buildBriefingIndex({ positions: 'The budget of 40k euros was approved by finance on Monday.' });
+  const answer = () =>
+    repliesJson(
+      { text: 'Finance approved the budget of 90k euros.', source: 'briefing' }, // same words, another figure
+      { text: 'Finance approved the budget of 40k euros.', source: 'briefing' },
+      { text: 'Let me check.', source: 'general' }
+    );
+  const { engine } = fakeEngine({ world: { answer }, briefing });
+  const res = await engine.suggest([{ speaker: 'Maya', text: 'Was the budget approved by finance?' }]);
+  assert.deepEqual(res.replies.map((r) => r.source), ['general', 'briefing', 'general']);
+});
+
 // ---- 4. Cloud path: lazy App Check and clear failures ----
 test('lazy App Check provider: nothing is built before the first token is asked for', async () => {
   const seen = [];
@@ -161,6 +207,17 @@ test('lazy App Check provider: nothing is built before the first token is asked 
   await provider.getToken(true);
   assert.deepEqual(seen, ['made', 'init:demo'], 'built once, with the app');
   assert.equal(provider.isEqual(provider), true);
+});
+
+test('lazy App Check provider: a token that never comes is an error after the timeout, and the next request can try again', async () => {
+  let calls = 0;
+  const provider = lazyAppCheckProvider(() => ({ initialize() {}, getToken: () => (calls++ ? Promise.resolve({ token: 'late' }) : new Promise(() => {})) }), { timeoutMs: 30 });
+  provider.initialize({ name: 'demo' });
+  const t0 = Date.now();
+  await assert.rejects(provider.getToken(true), /App Check did not answer in 0\.03 s \(reCAPTCHA may be blocked\)/);
+  assert.ok(Date.now() - t0 < 500);
+  assert.equal(cloudProblem(new Error('Error fetching from https://x: App Check did not answer in 10 s (reCAPTCHA may be blocked)')), 'refused');
+  assert.deepEqual(await provider.getToken(true), { token: 'late' });
 });
 
 test('a refused or throttled cloud request is named, and basic replies are given', async () => {

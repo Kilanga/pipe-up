@@ -1,4 +1,5 @@
 import { rank, overlap } from './text.js';
+import { cleanReply, hasForeignLink, LIMITS } from './prompt.js';
 
 // A briefing is what the user prepared before the call: typed notes,
 // an uploaded document, or both, plus a short list of "my positions".
@@ -47,17 +48,24 @@ export function splitPositions(text) {
 
 // Prepared answers ("Prepare for the call"): up to 6 come from a model, the
 // user can edit them and add their own.
-export const PREPARED_LIMITS = { max: 12, questionChars: 200, answerChars: 300 };
+// An answer is offered as a reply, so it has the length of a reply.
+export const PREPARED_LIMITS = { max: 12, questionChars: 200, answerChars: LIMITS.replyChars };
 
-/** The prepared answers that can be used: both fields filled, bounded. */
-export function cleanPrepared(list) {
+/**
+ * The prepared answers that can be used: both fields filled, bounded, and
+ * checked like any reply (core/prompt.js cleanReply), because a prepared
+ * answer is shown first, as it is. An answer or a question with a link or an
+ * e-mail address that is not in `allowedText` (the briefing) is left out.
+ */
+export function cleanPrepared(list, allowedText = '') {
   if (!Array.isArray(list)) return [];
   return list
     .map((q) => ({
       question: String(q?.question || '').replace(/\s+/g, ' ').trim().slice(0, PREPARED_LIMITS.questionChars),
-      answer: String(q?.answer || '').replace(/\s+/g, ' ').trim().slice(0, PREPARED_LIMITS.answerChars),
+      // No word limit here: these may be the user's own words.
+      answer: cleanReply(q?.answer, { maxWords: Infinity, maxChars: PREPARED_LIMITS.answerChars, allowedText }) || '',
     }))
-    .filter((q) => q.question && q.answer)
+    .filter((q) => q.question && q.answer && !hasForeignLink(q.question, allowedText))
     .slice(0, PREPARED_LIMITS.max);
 }
 
@@ -69,7 +77,9 @@ export function buildBriefingIndex(b = {}) {
     ...chunkText(b.notes, 'notes'),
     ...chunkText(b.documentText, b.documentName ? `doc:${b.documentName}` : 'doc'),
   ];
-  return { chunks, positions: splitPositions(b.positions), prepared: cleanPrepared(b.prepared) };
+  // What the person wrote or uploaded: the only place a link may come from.
+  const own = [b.positions, b.notes, b.documentText].map((t) => String(t || '')).join('\n');
+  return { chunks, positions: splitPositions(b.positions), prepared: cleanPrepared(b.prepared, own) };
 }
 
 /**

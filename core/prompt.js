@@ -67,7 +67,8 @@ const tail = (s, n) => {
 };
 // Any run of 2+ angle brackets goes, so no pattern can rebuild <<< or >>>.
 // Full-width and small look-alikes count as angle brackets.
-const fence = (s) => String(s).replace(/[＜﹤]/g, '<').replace(/[＞﹥]/g, '>').replace(/[<>]{2,}/g, '');
+// Shared with core/prepare.js: one rule for every text placed between <<< and >>>.
+export const fence = (s) => String(s).replace(/[＜﹤]/g, '<').replace(/[＞﹥]/g, '>').replace(/[<>]{2,}/g, '');
 
 /**
  * Who said each line. A display name is chosen by its owner, so it is data
@@ -130,7 +131,44 @@ export function buildFullPrompt(opts, rulesOpts) {
 
 // Links and addresses: a reply is something to say out loud or post in the
 // chat, and a model that was talked into it could plant a link there.
-const LINK = /(?:https?:\/\/|www\.)[^\s"'<>]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b[\w-]+(?:\.[\w-]+)*\.(?:com|net|org|io|co|app|dev|info|biz|xyz|link|site|online|top|ly|me|ru|cn)\b(?:\/[^\s"'<>]*)?|\b[\w-]+(?:\.[a-z][\w-]*)+\/[^\s"'<>]+/gi;
+// Matched on a canonical form of the text, so look-alike writing does not
+// slip through: full-width letters, zero-width characters, other dots.
+const invisible = (s) => String(s).replace(/[\p{Cf}\p{Cc}]/gu, '');
+const canon = (s) => invisible(String(s).replace(/\s+/g, ' ').normalize('NFKC')).replace(/[․。｡]/g, '.');
+// In order: scheme://… or www.…; e-mail; any dotted name ending in letters
+// (evil.fr, evil.example, bit.ly/x); IP address; "evil dot com", evil[.]com;
+// a markdown link.
+const LINK =
+  /(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s"'<>]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+(?:\p{L}{2,}|xn--[a-z0-9-]+)(?![\p{L}\p{N}])(?:[:/][^\s"'<>]*)?|(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)|[\p{L}\p{N}-]+\s*(?:\[\.\]|\(\.\)|\sdot\s)\s*(?:com|net|org|io|co|app|dev|info|biz|xyz|link|site|online|top|ly|me|ru|cn|fr|de|uk|eu|ai)(?![\p{L}\p{N}])|\]\(/giu;
+const bare = (link) => link.toLowerCase().replace(/[.,;:!?)\]]+$/, '');
+
+/** The links and addresses written in a text, in a comparable form. */
+export function linksIn(text) {
+  return (canon(text).match(LINK) || []).map(bare);
+}
+
+/**
+ * The links a reply may repeat: those written in `allowedText` (the
+ * briefing), whole, plus the host name of each of its web addresses.
+ * A whole-link comparison, not "is it somewhere in the text": evil.com is
+ * not allowed because the briefing holds bob@devil.com.
+ */
+function allowedLinks(allowedText) {
+  const out = new Set();
+  for (const link of linksIn(allowedText)) {
+    out.add(link);
+    if (!link.includes('@')) out.add(link.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/^www\./, '').replace(/[:/].*$/, ''));
+  }
+  return out;
+}
+
+/** True when the text holds a link or an address that is not in `allowedText`. */
+export function hasForeignLink(text, allowedText = '') {
+  const found = linksIn(text);
+  if (!found.length) return false;
+  const allowed = allowedLinks(allowedText);
+  return found.some((link) => !allowed.has(link));
+}
 
 /**
  * One reply as it may be shown: bounded in words and in characters, or null
@@ -138,15 +176,12 @@ const LINK = /(?:https?:\/\/|www\.)[^\s"'<>]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b[\w
  * (the briefing material that was given to the model).
  */
 export function cleanReply(raw, { maxWords = 12, maxChars = LIMITS.replyChars, allowedText = '' } = {}) {
-  let t = String(raw || '')
-    .replace(/\s+/g, ' ')
+  // Invisible characters go: what is checked is what is shown.
+  let t = invisible(String(raw || '').replace(/\s+/g, ' '))
     .replace(/^["“]|["”]$/g, '')
     .trim();
   if (!t) return null;
-  const allowed = String(allowedText).toLowerCase();
-  for (const link of t.match(LINK) || []) {
-    if (!allowed.includes(link.replace(/[.,;:!?)]+$/, '').toLowerCase())) return null;
-  }
+  if (hasForeignLink(t, allowedText)) return null;
   const words = t.split(' ');
   if (words.length > maxWords + 4) t = words.slice(0, maxWords).join(' ') + '…';
   if (t.length > maxChars) {

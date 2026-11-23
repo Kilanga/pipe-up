@@ -44,11 +44,12 @@ export const FALLBACK_REPLIES = [
   { text: 'Let me check and get back to you.', source: 'general' },
 ];
 
-// Calm words for the call panel and the side panel.
+// Calm words for the call panel and the side panel. The technical reason
+// stays in the routing log (tooltip) and in the console.
 export const CLOUD_PROBLEM_TEXT = {
-  refused: 'The cloud did not accept this request (its safety check failed, or its limit is reached), so these are basic replies. On-device suggestions are not affected. Please try again later.',
-  busy: 'The cloud is busy or has reached its limit for now, so these are basic replies. On-device suggestions are not affected. Please try again later.',
-  error: 'The cloud could not be reached, so these are basic replies. On-device suggestions are not affected. You can try again later.',
+  refused: 'The cloud could not answer this time. These are basic replies. You can still write your own.',
+  busy: 'The cloud is busy right now. These are basic replies. You can still write your own.',
+  error: 'The cloud could not be reached. These are basic replies. You can still write your own.',
 };
 
 // Settings saved by an older version get the new defaults where they changed.
@@ -64,4 +65,13 @@ export function migrateSettings(saved = {}) {
   }
   s.settingsVersion = SETTINGS_VERSION;
   return s;
+}
+
+/**
+ * True when replies are set to go through the voice but no voice is on this
+ * computer (after an update from 0.3.1, whose voices are no longer offered):
+ * the output then goes back to "Chat only".
+ */
+export function voiceOutputWithoutVoice(settings, downloadedVoices) {
+  return !downloadedVoices.length && Boolean(settings.outputMode) && settings.outputMode !== 'chat';
 }
