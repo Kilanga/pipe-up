@@ -9,15 +9,24 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: write
+# Nothing by default: each job asks for what it needs.
+permissions: {}
 
 jobs:
-  release:
+  # Runs the project's code (npm ci, tests, build) with a read-only token
+  # that is not left in the checkout.
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      go: ${{ steps.v.outputs.go }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -25,28 +34,58 @@ jobs:
         id: v
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
         run: |
           V=$(node -p "require('./package.json').version")
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "release" ] || ! gh release view "v$V" >/dev/null 2>&1; then echo "go=true" >> "$GITHUB_OUTPUT"; fi
+          if [ "$EVENT" = "release" ] || ! gh release view "v$V" >/dev/null 2>&1; then echo "go=true" >> "$GITHUB_OUTPUT"; fi
       - if: steps.v.outputs.go == 'true'
         run: npm ci && npm test
       - name: Build
         if: steps.v.outputs.go == 'true'
         env:
-          # Firebase web settings (public identifiers, protected by App Check)
+          # Firebase web settings (public identifiers, protected by App Check).
+          # The build stops if this variable is missing (scripts/build.mjs).
           PIPE_UP_FIREBASE_CONFIG: ${{ vars.PIPE_UP_FIREBASE_CONFIG }}
         run: npm run build
-      - name: Publish
+      - name: Release notes
         if: steps.v.outputs.go == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
         run: |
-          V=${{ steps.v.outputs.version }}
-          if [ "${{ github.event_name }}" = "release" ]; then
-            gh release upload "${{ github.event.release.tag_name }}" dist/pipe-up-extension.zip --clobber
+          if [ -f "docs/releases/$V.md" ]; then cp "docs/releases/$V.md" dist/notes.md; else : > dist/notes.md; fi
+      - if: steps.v.outputs.go == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: |
+            dist/pipe-up-extension.zip
+            dist/notes.md
+          if-no-files-found: error
+
+  # The only job that can write to the repository. It runs no code from the
+  # repository: it publishes the files built above.
+  release:
+    needs: build
+    if: needs.build.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name }}
+          V: ${{ needs.build.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "release" ]; then
+            gh release upload "$TAG" pipe-up-extension.zip --clobber
           else
-            NOTES=docs/releases/$V.md
-            [ -f "$NOTES" ] || NOTES=/dev/null
-            gh release create "v$V" dist/pipe-up-extension.zip --target "$GITHUB_SHA" --title "Pipe Up $V" --notes-file "$NOTES" --latest
+            gh release create "v$V" pipe-up-extension.zip --target "$SHA" --title "Pipe Up $V" --notes-file notes.md --latest
           fi
