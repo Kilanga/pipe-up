@@ -22,7 +22,7 @@ Rows 1 to 3 are that opening. The *On device* badge is on screen from 0:19.
 | 3 | 0:19–0:34 | Close-up of the panel: three short replies, badge **On device**, the quick phrases, "4 — I answered myself". | Pipe Up gives you one key to hold the floor, and short replies from your own notes. Firebase AI Logic runs them on Gemini Nano, on your device. The cloud is used only if you agree. | Firebase AI Logic · Gemini Nano on device · cloud only with consent |
 | 4 | 0:34–0:52 | Meet. The colleague (second account, on a phone) says: **"Sam, are you frozen?"** The caption appears. Sam presses **Alt+1**: "I'm still speaking, one moment." shows in the Meet chat. Sam speaks, then presses **4**: "Got it. Pipe Up stays in the background." | This scene is staged. Sam is in a block. *(colleague: "Sam, are you frozen?")* Sam presses Alt+1. Everyone sees his message in the chat. He finishes his sentence himself, then presses 4: I answered myself. | **STAGED DEMO** — both accounts belong to the author *(keep this caption for the whole scene)* |
 | 5 | 0:52–1:12 | Demo, **Briefing** tab: *My positions*, notes, a document. Click **2. Prepare the answers**, then **Prepare with the cloud**: the confirmation that states what is sent, *confirm*, the list of likely questions, one answer being edited. Cut to the **Live** tab: the preparation line in the routing log. | Before the call, Sam writes his positions and notes, or adds a document. Prepare for the call turns them into likely questions, with short answers he can edit. The cloud does this once, after he confirms. During the call, the device does the rest. | Cloud before the call, device during the call |
-| 6 | 1:12–1:38 | Demo. Caption: "Do we still think the March deadline is realistic?" Three replies appear; one is tagged *From your briefing*; badge **On device**. Press **1**, **Enter**: the reply lands in the chat. Then the **Live** tab: the routing log line (*On device · … ms · Gemini Nano on this computer · used your briefing*). | A question about the deadline. After the pause, three short replies appear. This one comes from Sam's briefing. The badge says On device. Nothing is sent until Sam presses 1, then Enter. The log shows where each reply was generated, and why. It reads inferenceSource from Firebase AI Logic. | `inferenceSource` → badge and routing log |
+| 6 | 1:12–1:38 | Demo. Caption: "Do we still think the March deadline is realistic?" Three replies appear; one is tagged *From your briefing*; badge **On device**. Press **1**, **Enter**: the reply lands in the chat. Then the **Live** tab: the routing log line (*On device · … ms · Gemini Nano on this computer · used your prepared answer*). | A question about the deadline. After the pause, three short replies appear. This one comes from Sam's briefing. The badge says On device. Nothing is sent until Sam presses 1, then Enter. The log shows where each reply was generated, and why. It reads inferenceSource from Firebase AI Logic. | `inferenceSource` → badge and routing log |
 | 7 | 1:38–2:00 | Demo, **Live** tab. Tick *Demo: simulate a computer without Gemini Nano*. Tick *Allow the cloud when on-device AI is not available*. Show the second box (*Also send relevant briefing excerpts…*) unticked. **Next line**: badge **Cloud**; the log line ends with "cloud, last 2 caption lines sent". | On a computer without Gemini Nano, Pipe Up asks first. If Sam agrees, only the last two caption lines go to Gemini in the cloud, protected by App Check. His briefing needs a second opt-in. His past replies never leave the device. Now the badge says Cloud. | Consent first · 2 caption lines · App Check |
 | 8 | 2:00–2:20 | Meet, two windows side by side: Sam's, and the colleague's (what others hear). Show the voice choice for two seconds (three voices). Output set to *Chat + synthetic voice*. Sam presses **2**, **Enter**: the synthetic voice is heard on the colleague's side and the text is in the chat. Then **Alt+D**: Sam's own line appears in the chat. | Sam can also have a reply read aloud in the call. The voice is made on his computer. It is clearly synthetic, and it is not a copy of his voice. *(synthetic voice reads the reply)* With Alt+D, he tells colleagues in his own words. | Synthetic voice, generated locally · not a voice clone |
 | 9 | 2:20–2:31 | Demo, **Settings → Display and reading**: tick *Easy reading*, *One suggestion at a time*, *High contrast*, one after the other; the panel changes at once. | Reading under pressure is hard. So there is easy reading, one suggestion at a time, high contrast and reduced motion. | Display and reading options |
@@ -34,13 +34,12 @@ Rows 1 to 3 are that opening. The *On device* badge is on screen from 0:19.
 - Do not speed up or cut a wait for a suggestion without saying so. If a cloud wait is shortened in the edit, add the caption "wait shortened".
 - Scene 4 is staged and says so, in the narration and on screen.
 - Every reply shown must be one the product really generated during the recording. Do not retype replies in the edit.
-- In scene 8, write the words the voice really says into cue 32 of the `.srt` file (it holds a placeholder).
 
-## STILL TO CONFIRM
+## For Arnaud only — do not paste
 
-Resolved from the merged code: "Prepare for the call" exists as narrated in row 5 (one cloud request after a confirmation; prepared answers used on the device during the call); the three voices are trained on public-domain recordings, so the voice may be heard in the video. The narration and the subtitles did not change.
+The script above matches version 0.4.0: the buttons, the tag *From your briefing* and the log texts are the ones the interface shows. What depends on the recording day:
 
-| # | Item | If confirmed | If not confirmed by recording day |
+| # | Item | If it is done | If it is not done by recording day |
 | --- | --- | --- | --- |
 | 1 | The hosted demo is redeployed with 0.4.0 (step "2. Prepare the answers") | Record row 5 as written. | Record row 5 from a local build of the demo (`npm run build`, served from `dist/demo`), cropped to the page. Do not submit before the hosted demo is updated. |
 | 2 | The voice is verified in a live Meet call, heard by a second participant | Record row 8 as written. | Record row 8 on the hosted demo, with the caption "Hosted demo: the browser's own voice. In Meet, the extension mixes a local voice into the microphone." Remove "in the call" from cue 29. |
@@ -48,6 +47,7 @@ Resolved from the merged code: "Prepare for the call" exists as narrated in row 
 | 4 | Latency | Say no number in the video. The early start has not been measured on a real Gemini Nano. | — |
 | 5 | Feedback from adults who stutter | Replace the last two sentences of row 10 (cues 39–40) with the wording in `feedback-outreach.md`. | Keep row 10 as written. |
 | 6 | Final length | After the edit, retime the `.srt` on the real cut and check the video is under 3:00. | — |
+| 7 | Scene 8: the words the voice says | Write them into cue 32 of the `.srt` file, in place of its bracketed line. | — |
 
 ## Recording checklist (solo, Windows or macOS)
 
@@ -92,12 +92,12 @@ Real captures from the real Chrome, PNG, about 1600 px wide, no personal data:
 2. `docs/img/routing-log.png` — the *Live* tab with an *On device* line and a *Cloud* line in the log.
 3. `docs/img/briefing.png` — the *Briefing* tab with Sam's sample briefing.
 
-For the Devpost gallery, make annotated copies (two or three short labels with arrows: "Hold the floor: Alt+1", "Where it was generated", "From your briefing"). Keep the README copies clean. Then uncomment the screenshot block at the top of `README.md`.
+For the Devpost gallery, make annotated copies (two or three short labels with arrows: "Hold the floor: Alt+1", "Where it was generated", "From your briefing"). Keep the README copies clean. To show them in the README, add one line per image under the "For judges" block, for example `![The in-call panel: three short replies, the "On device" badge and the quick phrases](docs/img/overlay.png)`.
 
 ### Subtitles
 
 1. Finish the edit, then open `video-subtitles.srt` and move each cue to the real timing. Keep the text identical to what is said.
-2. Replace the placeholder in cue 32 with the words the synthetic voice says.
+2. In cue 32, replace the bracketed line with the words the synthetic voice says.
 3. In YouTube Studio: *Subtitles* → *Add language* → English → *Add* → *Upload file* → *With timing*. Do not rely on automatic captions.
 
 ### YouTube
