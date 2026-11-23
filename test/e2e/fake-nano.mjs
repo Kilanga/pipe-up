@@ -101,3 +101,17 @@ export async function fakeCloud(target, reply) {
   });
   return calls;
 }
+
+// What the fake cloud answers to a preparation request: four answers taken
+// from the sample briefing and one with an invented number, which Pipe Up
+// must leave out.
+export const CLOUD_QA = JSON.stringify({
+  items: [
+    { question: 'What is the status of the vendor contract?', answer: 'It is signed except the penalty clause; legal reviews it on Friday.' },
+    { question: 'Is the March deadline still realistic?', answer: 'Yes, if QA can start on February 10.' },
+    { question: 'Should we bring in a second vendor?', answer: 'I am against it: it would double the onboarding work.' },
+    { question: 'What is the main risk for the timeline?', answer: 'The API migration.' },
+    { question: 'What is the budget?', answer: 'The budget is 95000 euros.' },
+  ],
+});
+export const prepReply = (body) => (/likely questions/.test(body) ? CLOUD_QA : null);

@@ -7,7 +7,7 @@ const CHROME = process.env.CHROME || '/usr/bin/google-chrome';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 const EXT = REPO + 'dist/extension';
-const { fakeNano } = await import('./fake-nano.mjs');
+const { fakeNano, fakeCloud, prepReply } = await import('./fake-nano.mjs');
 const ctx = await chromium.launchPersistentContext(mkdtempSync(tmpdir() + '/pipe-up-'), {
   executablePath: CHROME, headless: true,
   args: ['--no-sandbox', `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
@@ -93,6 +93,30 @@ await meet2.evaluate(() => { document.getElementById('cap').lastElementChild.inn
 n = await nano(); o2 = await ov2(); const [cut, full] = n.prompts.slice(warm + 1);
 ok('captions changed: early request aborted in the side panel', cut?.aborted && !cut.done, JSON.stringify(cut && { aborted: cut.aborted, done: cut.done }));
 ok('captions changed: the full line is answered', full?.done && o2.cards[0]?.includes('budget, is it'), o2.cards[0]);
+// ---- Prepare for the call in the side panel ----
+const cloudX = await fakeCloud(ctx2, prepReply);
+const stored = () => panel2.evaluate(async () => { const s = await chrome.storage.local.get(['briefing', 'settings']); return { prepared: s.briefing?.prepared || [], cloudConsent: Boolean(s.settings?.cloudConsent), share: Boolean(s.settings?.shareBriefingWithCloud) }; });
+const rows = panel2.locator('section.prep ol.qa li');
+const confirmBox = panel2.locator('section.prep .confirm');
+await panel2.evaluate(() => document.getElementById('pu-tab-Briefing').click());
+ok('side panel: no "Prepare for the call" before a briefing exists', await panel2.locator('section.prep').isHidden());
+await panel2.locator('label.field', { hasText: 'My positions' }).locator('textarea').fill('I want to keep the March deadline if QA can start on February 10.\nI am against a second vendor: it would double the onboarding work.');
+await panel2.getByRole('button', { name: 'Save briefing' }).click(); await panel2.waitForTimeout(300);
+ok('side panel: "Prepare for the call" appears with the briefing', await panel2.locator('section.prep').isVisible());
+await panel2.getByRole('button', { name: 'Prepare on this computer' }).click(); await panel2.waitForTimeout(1200);
+let sx = await stored();
+ok('side panel: prepared on this computer, stored with the briefing, nothing sent', (await rows.count()) === 2 && sx.prepared.length === 2 && cloudX.length === 0, `${await rows.count()} rows, ${cloudX.length} request(s)`);
+await panel2.getByRole('button', { name: 'Prepare with the cloud' }).click(); await panel2.waitForTimeout(200);
+const ctext = await confirmBox.innerText();
+ok('side panel: the cloud asks first, and says what is sent and replaced', /This sends your briefing text \(about \d+ words\) to the Gemini API through Firebase, once\./.test(ctext) && /This replaces the 2 prepared answers below\./.test(ctext) && cloudX.length === 0, ctext.split('\n')[0]);
+await confirmBox.getByRole('button', { name: 'Continue' }).click(); await rows.nth(2).waitFor({ timeout: 15000 }).catch(() => {});
+sx = await stored();
+ok('side panel: one cloud request, answers stored, standing cloud options still off', cloudX.length === 1 && sx.prepared.length === 4 && !sx.cloudConsent && !sx.share, JSON.stringify([cloudX.length, sx.prepared.length, sx.cloudConsent, sx.share]));
+await meet2.evaluate(() => say('Jordan', 'Do we still think the March deadline is realistic?')); await meet2.waitForTimeout(1900);
+o2 = await ov2();
+ok('call in Meet: the prepared answer is used on device and tagged', o2.badge === 'On device' && o2.cards[0]?.includes('Yes, if QA can start on February 10.') && o2.cards[0]?.includes('From your briefing') && cloudX.length === 1, o2.cards[0]);
+await panel2.getByRole('button', { name: 'Delete briefing' }).click(); await panel2.waitForTimeout(300);
+ok('side panel: deleting the briefing deletes the prepared answers', (await stored()).prepared.length === 0 && (await rows.count()) === 0);
 // on-demand mode never starts early
 await panel2.evaluate(() => document.getElementById('pu-tab-Settings').click());
 await panel2.locator('label.field', { hasText: 'When to suggest' }).locator('select').selectOption('onDemand');

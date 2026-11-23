@@ -248,6 +248,12 @@ sampleBtn.addEventListener('click', async () => {
   location.reload();
 });
 
+// Step 2 of the demo: opens "Prepare for the call" in the Briefing tab. The
+// confirmation that sends the briefing to the cloud stays there, in full.
+document.getElementById('prep').addEventListener('click', () => {
+  if (!controls.showPrepare()) overlay.notice("Load Sam's sample briefing first (step 1), or save your own in the Briefing tab.");
+});
+
 const engineReady = initFirebase({
   firebaseConfig: __FIREBASE_CONFIG__,
   appCheck: __RECAPTCHA_SITE_KEY__ ? { provider: new ReCaptchaEnterpriseProvider(__RECAPTCHA_SITE_KEY__) } : {},
