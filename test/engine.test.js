@@ -28,7 +28,7 @@ test('no Gemini Nano and no consent: nothing is sent, basic replies', async () =
 });
 
 test('no Gemini Nano, consent given: PREFER_ON_DEVICE reaches the cloud with 2 lines and no history', async () => {
-  const events = [{ id: '1', ts: Date.now(), context: 'Is the March deadline realistic?', action: 'typed', reply: 'SECRET-HISTORY', shown: [] }];
+  const events = [{ id: '1', ts: Date.now(), keys: ['march', 'deadline', 'realistic'], action: 'typed', reply: 'SECRET-HISTORY', shown: [] }];
   const { engine, world } = fakeEngine({ world: { nano: false }, settings: { cloudConsent: true }, events });
   const lines = [{ speaker: 'A', text: 'first line' }, { speaker: 'B', text: 'second line' }, ...LINES];
   const res = await engine.suggest(lines);

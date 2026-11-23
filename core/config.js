@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS = {
   shareBriefingWithCloud: false,
   myName: '', // how Meet labels the user's own captions, if not "You"
   // Quick phrases. The first one holds the floor during a block, as asked
-  // for by people who stutter in co-design research (Wu et al., DIS 2024).
+  // for by people who stutter in co-design research (Li, Wu & Leshed, DIS 2024).
   fillers: ["I'm still speaking, one moment.", 'Could you repeat that, please?', "I'll answer in the chat."],
   // Optional: also raise the hand in Meet when the first quick phrase is sent.
   raiseHandOnHold: false,
@@ -43,6 +43,13 @@ export const FALLBACK_REPLIES = [
   { text: 'Could you say a bit more about that?', source: 'general' },
   { text: 'Let me check and get back to you.', source: 'general' },
 ];
+
+// Calm words for the call panel and the side panel.
+export const CLOUD_PROBLEM_TEXT = {
+  refused: 'The cloud did not accept this request (its safety check failed, or its limit is reached), so these are basic replies. On-device suggestions are not affected. Please try again later.',
+  busy: 'The cloud is busy or has reached its limit for now, so these are basic replies. On-device suggestions are not affected. Please try again later.',
+  error: 'The cloud could not be reached, so these are basic replies. On-device suggestions are not affected. You can try again later.',
+};
 
 // Settings saved by an older version get the new defaults where they changed.
 export const SETTINGS_VERSION = 2;

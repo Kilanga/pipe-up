@@ -1,7 +1,7 @@
 {
   "name": "pipe-up",
   "version": "0.3.1",
-  "description": "Reply suggestions for people with speech differences in video calls — on-device first with Firebase AI Logic hybrid inference",
+  "description": "Reply suggestions for people who stutter in video calls — on-device first with Firebase AI Logic hybrid inference",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",

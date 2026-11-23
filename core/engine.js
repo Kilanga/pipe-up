@@ -5,7 +5,7 @@ import { getRemoteConfig, fetchAndActivate, getValue } from 'firebase/remote-con
 
 import { REMOTE_DEFAULTS, FALLBACK_REPLIES } from './config.js';
 import { buildPrompt, parseReplies, partialReplies, systemRules, RESPONSE_JSON_SCHEMA } from './prompt.js';
-import { retrieveBriefing } from './briefing.js';
+import { retrieveBriefing, briefingTexts, restsOnBriefing } from './briefing.js';
 import { similarExamples, ignoredSuggestions } from './memory.js';
 import { PREP_JSON_SCHEMA, prepRules, planPreparation, buildPrepPrompt, parsePrepared, mergePrepared } from './prepare.js';
 import { similarity } from './text.js';
@@ -13,21 +13,52 @@ import { similarity } from './text.js';
 const LANG = [{ type: 'text', languages: ['en'] }];
 
 /**
+ * An App Check provider that does nothing until a token is asked for.
+ * `make()` builds the real provider (reCAPTCHA Enterprise in the hosted
+ * demo) at the first cloud request: before that, no reCAPTCHA script is
+ * loaded and no token is exchanged, so a visit that stays on the device
+ * costs no assessment and sets no reCAPTCHA cookie.
+ * It relies on the provider methods the SDK itself calls (`initialize`,
+ * `getToken`; checked in @firebase/app-check 0.13.1) and is covered by
+ * test/e2e/network.mjs.
+ */
+export function lazyAppCheckProvider(make) {
+  let app = null;
+  let real = null;
+  const self = {
+    initialize(a) {
+      app = a;
+    },
+    getToken(limitedUse) {
+      if (!real) {
+        real = make();
+        real.initialize(app);
+      }
+      return real.getToken(limitedUse);
+    },
+    isEqual: (other) => other === self,
+  };
+  return self;
+}
+
+/**
  * Initializes Firebase, App Check and Remote Config.
  * appCheck: { provider } — an App Check provider built by the caller (the
  *           hosted demo passes reCAPTCHA Enterprise; keeping that import out
  *           of this file keeps remote scripts out of the extension bundle), or
  *           { debugToken } — the extension's locally entered debug token.
+ * Tokens are never fetched ahead of time (no auto-refresh): one is asked for
+ * by each cloud request, and only then.
  */
 export async function initFirebase({ firebaseConfig, appCheck = {} }) {
   const app = initializeApp(firebaseConfig);
   if (appCheck.provider) {
-    initializeAppCheck(app, { provider: appCheck.provider, isTokenAutoRefreshEnabled: true });
+    initializeAppCheck(app, { provider: appCheck.provider, isTokenAutoRefreshEnabled: false });
   } else if (appCheck.debugToken) {
     globalThis.FIREBASE_APPCHECK_DEBUG_TOKEN = appCheck.debugToken;
     initializeAppCheck(app, {
       provider: new CustomProvider({ getToken: () => Promise.reject(new Error('Debug token only')) }),
-      isTokenAutoRefreshEnabled: true,
+      isTokenAutoRefreshEnabled: false,
     });
   }
   const remote = { ...REMOTE_DEFAULTS };
@@ -70,6 +101,22 @@ const STATUS_WORDS = {
   downloadable: 'not downloaded yet',
   downloading: 'still downloading',
 };
+
+/**
+ * Why a cloud request failed, in three kinds the interface can explain:
+ * 'refused' (App Check or the API said no), 'busy' (limit reached, try
+ * later) or 'error' (anything else, e.g. no network).
+ */
+export function cloudProblem(e) {
+  const status = Number(e?.customErrorData?.status) || 0;
+  const text = String(e?.message || e || '');
+  if (!status && /network|failed to fetch/i.test(text)) return 'error'; // nothing answered at all
+  // App Check words a refusal as "throttled due to 403 error": it is a refusal.
+  if (status === 401 || status === 403 || /\b40[13]\b/.test(text)) return 'refused';
+  if (status === 429 || status === 503 || /thrott|quota|exhausted|too many requests/i.test(text)) return 'busy';
+  if (/app ?check|recaptcha|permission/i.test(text)) return 'refused';
+  return 'error';
+}
 
 const abortError = () => new DOMException('The request was cancelled', 'AbortError');
 const isAbort = (e, signal) => Boolean(signal?.aborted) || e?.name === 'AbortError';
@@ -229,7 +276,8 @@ export class SuggestionEngine {
   }
 
   /** Streams one request and returns the parsed replies and the real route. */
-  async #run(model, prompt, { hasBriefing, onPartial, signal, mayUseDevice }) {
+  async #run(model, prompt, { hasBriefing, allowedText, onPartial, signal, mayUseDevice }) {
+    const limits = { maxWords: this.maxWords, allowedText };
     const stream = async () => {
       // Cloud requests are cancelled through the request options.
       const { stream, response } = await model.generateContentStream(prompt, signal ? { signal } : undefined);
@@ -239,7 +287,7 @@ export class SuggestionEngine {
       let shown = 0;
       for await (const chunk of stream) {
         buf += chunk.text();
-        const partial = partialReplies(buf);
+        const partial = partialReplies(buf, limits);
         if (onPartial && partial.length > shown) {
           shown = partial.length;
           onPartial(partial);
@@ -248,7 +296,7 @@ export class SuggestionEngine {
       if (signal?.aborted) throw abortError();
       const final = await response;
       return {
-        replies: parseReplies(buf, { maxWords: this.maxWords, hasBriefing }),
+        replies: parseReplies(buf, { ...limits, hasBriefing }),
         route: final.inferenceSource === InferenceSource.IN_CLOUD ? 'in_cloud' : 'on_device',
       };
     };
@@ -324,7 +372,7 @@ export class SuggestionEngine {
    * @param {(replies:Array<{text:string,source:string}>) => void} [opts.onPartial]
    * @param {AbortSignal} [opts.signal] cancels the request, on device and in the cloud
    * @param {boolean} [opts.deviceOnly] early start: Gemini Nano or nothing, never the cloud
-   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:string, reason:string, ms:number, hasBriefing:boolean, error?:string, cancelled?:boolean, unavailable?:boolean}>}
+   * @returns {Promise<{replies:Array<{text:string,source:string}>, route:string, reason:string, ms:number, hasBriefing:boolean, error?:string, cloudProblem?:'refused'|'busy'|'error', cancelled?:boolean, unavailable?:boolean}>}
    */
   async suggest(lines, { onPartial, signal, deviceOnly = false } = {}) {
     const t0 = performance.now();
@@ -342,9 +390,16 @@ export class SuggestionEngine {
     // never leaves the computer unless briefing sharing is on.
     const prepared = briefing.prepared[0] || null;
     const fromPrepared = (r) => similarity(r.text, prepared.answer) >= 0.5;
-    // A reply that says the prepared answer is from the briefing, whatever
-    // label the model gave it.
-    const tagged = (replies) => (prepared ? replies.map((r) => (fromPrepared(r) ? { ...r, source: 'briefing' } : r)) : replies);
+    // "From your briefing" is shown only when it is true. A reply that says
+    // the prepared answer is from the briefing, whatever label the model
+    // gave it; otherwise the model's own claim is checked against the
+    // briefing material it was given: the reply must share words with it.
+    const material = briefingTexts(briefing);
+    const tagged = (replies) =>
+      replies.map((r) => {
+        if (prepared && fromPrepared(r)) return { ...r, source: 'briefing' };
+        return r.source === 'briefing' && !restsOnBriefing(r.text, material) ? { ...r, source: 'general' } : r;
+      });
     // No model may read the briefing here: the prepared answer is offered as
     // it is, ahead of the other replies. This is a lookup on this computer.
     const preparedFirst = (replies) =>
@@ -378,7 +433,7 @@ export class SuggestionEngine {
       });
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const r = await this.#run(this.deviceModel, prompt, { hasBriefing, onPartial, signal, mayUseDevice: true });
+          const r = await this.#run(this.deviceModel, prompt, { hasBriefing, allowedText: material.join('\n'), onPartial, signal, mayUseDevice: true });
           if (r.replies) return done(tagged(r.replies), r.route, 'Gemini Nano on this computer', hasBriefing);
           deviceProblem = 'Gemini Nano gave an unreadable answer';
         } catch (e) {
@@ -398,7 +453,8 @@ export class SuggestionEngine {
     // Cloud path: personal history is never sent; briefing excerpts (and a
     // matching prepared answer) only if the user turned on the separate option.
     const share = Boolean(settings.shareBriefingWithCloud);
-    const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [], prepared: [] } });
+    // Display names stay on the computer: the cloud sees "Speaker A", "Speaker B", "Me".
+    const cloudPrompt = buildPrompt({ lines: lines.slice(-2), briefing: share ? briefing : { chunks: [], positions: [], prepared: [] }, neutralSpeakers: true });
     // Without sharing, the prepared answer is added here, after the cloud
     // answered: shown first from the start so the cards do not move.
     const local = !share && prepared ? preparedFirst : (replies) => replies;
@@ -410,7 +466,7 @@ export class SuggestionEngine {
     const model = forced ? this.cloudModel : this.hybridModel;
     const sent = share && hasBriefing ? 'last 2 caption lines and briefing excerpts sent' : 'last 2 caption lines sent';
     try {
-      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, onPartial: cloudPartial, signal, mayUseDevice: !forced });
+      const r = await this.#run(model, cloudPrompt, { hasBriefing: share && hasBriefing, allowedText: share ? material.join('\n') : '', onPartial: cloudPartial, signal, mayUseDevice: !forced });
       if (r.replies) {
         const where = r.route === 'in_cloud' ? `cloud, ${sent}` : 'on this computer';
         const added = !share && prepared ? '; your prepared answer was added on this computer' : '';
@@ -419,7 +475,8 @@ export class SuggestionEngine {
       return done(basic(), 'fallback', `${deviceProblem}; cloud answer unreadable: ${basicWords}`, Boolean(prepared));
     } catch (e) {
       if (isAbort(e, signal)) return cancelled();
-      return done(basic(), 'fallback', `${deviceProblem}; cloud error: ${basicWords}`, Boolean(prepared), String(e?.message || e));
+      // `cloudProblem` lets the interface say calmly what happened.
+      return { ...done(basic(), 'fallback', `${deviceProblem}; cloud error: ${basicWords}`, Boolean(prepared), String(e?.message || e)), cloudProblem: cloudProblem(e) };
     }
   }
 }

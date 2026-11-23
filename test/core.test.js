@@ -78,10 +78,10 @@ test('rules and prompt are separate; data is fenced', () => {
   const p = buildPrompt({
     lines: [{ speaker: 'Maya', text: 'Update on the contract?' }],
     briefing: { positions: ['Signed except one clause.'], chunks: [] },
-    examples: [{ context: 'Status?', reply: 'On track.' }],
+    examples: [{ keys: ['status'], reply: 'On track.' }],
   });
   assert.match(p, /MY POSITIONS/);
-  assert.match(p, /Maya: <<<Update on the contract\?>>>/);
+  assert.match(p, /<<<Maya>>>: <<<Update on the contract\?>>>/);
   assert.doesNotMatch(p, /Never invent facts/);
 });
 

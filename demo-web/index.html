@@ -18,7 +18,7 @@
       <a class="muted" href="https://github.com/Kilanga/pipe-up" target="_blank" rel="noopener">Source code</a>
     </header>
     <div class="banner" id="nano-banner" hidden role="region" aria-label="On-device AI not available">
-      <p><b>This browser can't run Gemini Nano on this computer.</b> Pipe Up normally works fully on-device. To try it here, allow the cloud: the last two caption lines are sent to the Gemini API through Firebase. Sam's briefing is fictional, so this demo also sends the matching excerpts; in the extension that is a separate opt-in.</p>
+      <p><b id="nano-why">Gemini Nano is not available on this computer.</b> Pipe Up normally works fully on-device. To try it here, allow the cloud: the last two caption lines are sent to the Gemini API through Firebase, and Google reCAPTCHA checks this browser first (it sets a cookie). <span id="nano-data"></span></p>
       <button class="primary" id="try-cloud">Try with the cloud</button>
     </div>
     <div class="layout">
@@ -40,7 +40,9 @@
           </form>
         </div>
         <p class="muted small">Cloud before the call, device during the call: "Prepare the answers" lets a cloud model read Sam's fictional briefing once, after you confirm. The answers it prepares are then used on this computer while the call runs.</p>
-        <p class="muted small">Demo voice: your browser's speech synthesis. The extension uses a local Piper voice mixed into your Meet microphone.</p>
+        <p class="muted small" id="share-note" role="status" hidden></p>
+        <p class="muted small">Demo voice: a speech voice installed on this computer (never an online voice); with none, the reply goes to the chat. The extension uses a local Piper voice mixed into your Meet microphone.</p>
+        <p class="muted small">What this page contacts: when it opens, Firebase Remote Config and Firebase Installations (which gives this browser a random ID), to read its settings. Google reCAPTCHA (a cookie) and the Gemini API only when a cloud request is made, after you allow it. Your briefing, history and settings are stored in this browser.</p>
         <section class="chat" aria-label="Call chat">
           <h2>Call chat</h2>
           <ol id="chat"></ol>

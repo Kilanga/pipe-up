@@ -66,7 +66,7 @@ Resolved in the second pass: row 17 (voice licence) and the weak point of row 5 
 | 15 | Third-party SDKs, APIs and data are used under their licences | OK | `THIRD_PARTY_NOTICES.md` (rewritten in the merge): Firebase JS SDK 13.3.0 and pdf.js 6.5.438, Apache-2.0; ONNX Runtime Web 1.31.1 and piper-phonemize, MIT. `package.json` no longer depends on `@mintplex-labs/piper-tts-web`. | None. |
 | 16 | Open-source components are used in compliance with their licences (GPL-3.0 phonemizer in the zip) | OK, low risk | The notices give the exact npm package, its SHA-256, its build description and the upstream sources, and explain how `scripts/phonemizer-data.mjs` trims the data file. They also say that the package does not record which upstream commits were used. Pipe Up's own code stays Apache-2.0. | None. |
 | 17 | **Voice model licence** — no content "you don't have rights to"; the rules give the Sponsor a licence to use the submission, including video clips, for promotion (§12) | **OK (resolved)** | `extension/src/voices.js` lists three voices only: `en_US-ljspeech-medium` (default), `en_US-kristin-medium`, `en_US-john-medium`, each with its size and SHA-256, fetched from `rhasspy/piper-voices` at revision `375a0fe6…`. `THIRD_PARTY_NOTICES.md` records their recordings as public domain (LJ Speech; LibriVox) from each model card at that revision, and states that `en_US-hfc_female-medium` (CC BY-NC-SA 4.0) is no longer offered and is removed from storage. I read the ljspeech card myself in the first pass (public domain); I did not re-fetch the kristin and john cards. | **Arnaud:** none for the licence. Users of 0.3.1 set up a voice again. |
-| 18 | No third-party names in demo content | Low risk | The sample briefing names a vendor "Northwind Logistics" (`demo-web/demo.js`). It is meant as fiction, but the name may exist. | Code owner: use an obviously invented name. |
+| 18 | No third-party names in demo content | Low risk | The sample briefing names a vendor "Zorvex Freight" (`demo-web/demo.js`). It is meant as fiction, but the name may exist. | Code owner: use an obviously invented name. |
 
 ### Access for judges
 
@@ -142,7 +142,7 @@ Resolved on merged `main`: "Prepare for the call" and the four modes; real cance
 5. Latency of the early start measured on a real Gemini Nano, or no new number anywhere.
 6. Feedback from adults who stutter → only the wording in `feedback-outreach.md`.
 7. GitHub About set (row 27); screenshots captured and uncommented (row 28); YouTube URL in the form (row 30).
-8. Wording left in the code (not edited here): `package.json` description ("speech differences"); "Wu et al." in `core/config.js`; "Northwind Logistics" in the demo; "speak for you" in `extension/src/content.js`.
+8. Wording left in the code (not edited here): `package.json` description ("speech differences"); "Wu et al." in `core/config.js`; "Zorvex Freight" in the demo; "speak for you" in `extension/src/content.js`.
 
 ## How the checks were run
 

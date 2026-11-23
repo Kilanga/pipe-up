@@ -1,9 +1,9 @@
 // Hosted demo: the same engine and interface as the extension, on a
 // simulated call, so anyone can try Pipe Up without a Meet meeting.
 import { ReCaptchaEnterpriseProvider } from 'firebase/app-check';
-import { initFirebase, SuggestionEngine, deviceStatus } from '../core/engine.js';
+import { initFirebase, lazyAppCheckProvider, SuggestionEngine, deviceStatus } from '../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../core/memory.js';
-import { migrateSettings } from '../core/config.js';
+import { migrateSettings, CLOUD_PROBLEM_TEXT } from '../core/config.js';
 import { SuggestionRunner } from '../core/runner.js';
 import { createPauseTimer } from '../core/pause.js';
 import { speakPrivately } from '../shared/private-speech.js';
@@ -27,7 +27,7 @@ const SAMPLE_BRIEFING = {
     'I want to keep the March deadline if QA can start on February 10.\n' +
     'I am against a second vendor: it would double the onboarding work.',
   notes:
-    'Project status for the weekly sync. Vendor: Northwind Logistics. Contract signed on all points except the late-delivery penalty clause, which legal reviews on Friday. ' +
+    'Project status for the weekly sync. Vendor: Zorvex Freight (an invented name). Contract signed on all points except the late-delivery penalty clause, which legal reviews on Friday. ' +
     'Timeline: March release holds if QA starts February 10; the risk is the API migration. I sent the risk log to Maya on Monday.',
 };
 
@@ -54,22 +54,54 @@ const settingsStore = {
   async get() {
     return settings;
   },
+  // A choice made by the user in the interface. Ticking or unticking
+  // "send briefing excerpts" there is theirs from then on (see autoShare).
   async set(patch) {
-    settings = { ...settings, ...patch };
-    local.write('pu-settings', settings);
-    listeners.forEach((fn) => fn(settings));
+    if ('shareBriefingWithCloud' in patch) patch = { ...patch, demoAutoShare: false };
+    return applyPatch(patch);
   },
 };
+async function applyPatch(patch) {
+  settings = { ...settings, ...patch };
+  local.write('pu-settings', settings);
+  listeners.forEach((fn) => fn(settings));
+}
 let briefingCache = local.read('pu-briefing', {});
 const briefingStore = {
   async get() {
     return briefingCache;
   },
-  async set(b) {
+  async set(b, { byUser = false } = {}) {
+    // An answer typed or changed by the user is their own text.
+    if (byUser && JSON.stringify(b.prepared || []) !== JSON.stringify(briefingCache.prepared || [])) ownAnswers = true;
+    if (!b.prepared?.length) ownAnswers = false;
+    local.write('pu-own-answers', ownAnswers);
     briefingCache = b;
     local.write('pu-briefing', b);
+    stopAutoShare();
+    updateBanner();
   },
 };
+
+// ---- Sam's sample is fictional; anything else may be real ----
+// "Try with the cloud" also sends briefing excerpts, but only while the
+// briefing is Sam's unmodified sample. As soon as the user edits it, adds a
+// document or writes an answer, that automatic sharing stops and is said;
+// sending their own text is then an explicit choice in the Live tab.
+let ownAnswers = Boolean(local.read('pu-own-answers', false));
+function briefingIsOwn(b = briefingCache) {
+  const has = Boolean(b?.positions || b?.notes || b?.documentText || b?.prepared?.length);
+  const sample = (b?.positions || '') === SAMPLE_BRIEFING.positions && (b?.notes || '') === SAMPLE_BRIEFING.notes && !b?.documentText;
+  return has && (!sample || ownAnswers);
+}
+const shareNote = document.getElementById('share-note');
+function stopAutoShare() {
+  if (!settings.demoAutoShare || !briefingIsOwn()) return;
+  applyPatch({ shareBriefingWithCloud: false, demoAutoShare: false });
+  shareNote.hidden = false;
+  shareNote.textContent =
+    "This briefing is no longer Sam's sample, so it is not sent to the cloud any more. To send excerpts of your own text, tick \"Also send relevant briefing excerpts to the cloud\" in the Live tab.";
+}
 
 const memory = new IdbMemoryStore('pipe-up-demo');
 let briefingIndex = null;
@@ -81,6 +113,7 @@ const controls = mountControls(document.getElementById('app'), {
   settings: settingsStore,
   briefing: briefingStore,
   onBriefing: (idx) => (briefingIndex = idx),
+  onSimulate: () => updateBanner(),
   demo: true,
 });
 
@@ -116,13 +149,14 @@ function learn(e) {
 
 function deliver(text) {
   const mode = settings.outputMode;
-  if (mode !== 'voice') addChat('Sam', text);
-  if (mode !== 'chat' && 'speechSynthesis' in window) {
-    // In the demo the voice plays on your speakers. In a Meet call the
-    // extension mixes a local voice into the microphone stream.
-    speechSynthesis.cancel();
-    speechSynthesis.speak(Object.assign(new SpeechSynthesisUtterance(text), { lang: 'en-US', rate: 1 }));
-  }
+  // In the demo the voice plays on your speakers, with a voice installed on
+  // this computer only: the browser's default voice may be an online one,
+  // which would send the text away. (In a Meet call the extension mixes its
+  // own local voice into the microphone stream.)
+  const spoken = mode !== 'chat' && speakPrivately(text);
+  if (mode !== 'voice' || !spoken) addChat('Sam', text);
+  // (After the panel's own "Sent" message, which would replace it.)
+  if (mode !== 'chat' && !spoken) setTimeout(() => overlay.notice('No voice installed on this computer to read the reply: it went to the chat.'));
 }
 
 function addChat(who, text) {
@@ -135,13 +169,31 @@ function addChat(who, text) {
 
 // ---- banner for computers without Gemini Nano (judges, phones, other browsers) ----
 const banner = document.getElementById('nano-banner');
+const bannerWhy = document.getElementById('nano-why');
+const bannerData = document.getElementById('nano-data');
+const BANNER_WHY = {
+  simulated: 'You are simulating a computer without Gemini Nano.',
+  downloadable: 'Gemini Nano is not set up on this computer yet. You can set it up in the Live tab (one download, several minutes).',
+  downloading: 'Gemini Nano is still downloading on this computer (see the Live tab).',
+  unavailable: 'Gemini Nano is not available on this computer.',
+  unsupported: 'This browser does not offer Gemini Nano.',
+};
 async function updateBanner() {
   const s = await deviceStatus();
-  banner.hidden = s === 'available' || settings.cloudConsent;
+  const simulated = s === 'available' && Boolean(engine?.forceCloud);
+  banner.hidden = (s === 'available' && !simulated) || settings.cloudConsent;
+  bannerWhy.textContent = BANNER_WHY[simulated ? 'simulated' : s] || BANNER_WHY.unavailable;
+  bannerData.textContent = briefingIsOwn()
+    ? 'Your briefing is not sent: it is no longer Sam\'s sample. You can choose to send excerpts in the Live tab.'
+    : "Sam's briefing is fictional, so this demo also sends the matching excerpts, until you change the briefing; in the extension that is a separate opt-in.";
 }
 // Sam's briefing is fictional, so the demo also shares its excerpts with the
 // cloud; otherwise a judge without Gemini Nano never sees grounded replies.
-document.getElementById('try-cloud').addEventListener('click', () => settingsStore.set({ cloudConsent: true, shareBriefingWithCloud: true }));
+// Never the user's own text: see stopAutoShare().
+document.getElementById('try-cloud').addEventListener('click', () => {
+  const auto = !briefingIsOwn();
+  applyPatch({ cloudConsent: true, shareBriefingWithCloud: auto, demoAutoShare: auto });
+});
 updateBanner();
 
 // ---- simulated captions; one request at a time, as in the extension ----
@@ -159,7 +211,15 @@ const runner = new SuggestionRunner({
     if (job.id !== requestId) return; // a newer line arrived meanwhile
     overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
     scheduleAutoNext();
-    if (res.route === 'blocked') overlay.notice('On-device AI is not available here. Use "Try with the cloud" above to continue.');
+    if (res.route === 'blocked') {
+      overlay.notice(
+        settings.cloudConsent
+          ? 'On-device AI is not available here and the cloud is switched off for now: these are basic replies.'
+          : 'On-device AI is not available here. Use "Try with the cloud" above to continue.'
+      );
+    }
+    // The cloud refused or could not answer: say so, long enough to be read.
+    if (res.cloudProblem) overlay.notice(CLOUD_PROBLEM_TEXT[res.cloudProblem], 12000);
     if (res.error) console.warn('[Pipe Up]', res.error);
   },
   onLog: (res) => controls.reportRun(res),
@@ -244,7 +304,7 @@ document.getElementById('say').addEventListener('submit', (e) => {
 const sampleBtn = document.getElementById('sample');
 if (briefingCache?.positions || briefingCache?.docs?.length) sampleBtn.textContent = "Reload Sam's sample briefing";
 sampleBtn.addEventListener('click', async () => {
-  await briefingStore.set(SAMPLE_BRIEFING);
+  await briefingStore.set(SAMPLE_BRIEFING); // no prepared answers: the sample as it is
   location.reload();
 });
 
@@ -256,7 +316,9 @@ document.getElementById('prep').addEventListener('click', () => {
 
 const engineReady = initFirebase({
   firebaseConfig: __FIREBASE_CONFIG__,
-  appCheck: __RECAPTCHA_SITE_KEY__ ? { provider: new ReCaptchaEnterpriseProvider(__RECAPTCHA_SITE_KEY__) } : {},
+  // reCAPTCHA is loaded, and a token asked for, at the first cloud request
+  // only: a visit that stays on the device never contacts it.
+  appCheck: __RECAPTCHA_SITE_KEY__ ? { provider: lazyAppCheckProvider(() => new ReCaptchaEnterpriseProvider(__RECAPTCHA_SITE_KEY__)) } : {},
 }).then((firebase) => {
   engine = new SuggestionEngine({
     firebase,
@@ -265,5 +327,6 @@ const engineReady = initFirebase({
     getSettings: () => settings,
   });
   engine.warmUp();
+  updateBanner();
   return engine;
 });
