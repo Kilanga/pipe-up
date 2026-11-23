@@ -377,7 +377,7 @@ export function mountControls(root, o) {
         'li',
         {},
         h('span', { class: 'route ' + res.route }, ROUTE_TEXT[res.route] || res.route),
-        ` ${res.ms} ms · ${new Date().toLocaleTimeString()}`,
+        ` ${res.ms} ms${res.headStartMs ? ` (started ${res.headStartMs} ms before the pause)` : ''} · ${new Date().toLocaleTimeString()}`,
         h('div', { class: 'muted' }, res.reason + (res.hasBriefing ? ' · used your briefing' : ''))
       );
       log.prepend(item);

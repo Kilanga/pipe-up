@@ -7,11 +7,11 @@ const CHROME = process.env.CHROME || '/usr/bin/google-chrome';
 import http from 'node:http'; import { readFileSync, existsSync } from 'node:fs'; import path from 'node:path';
 const root = REPO + 'dist/demo';
 const types = { '.html':'text/html', '.js':'text/javascript', '.mjs':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml' };
-const srv = http.createServer((q,s)=>{ let f=path.join(root, decodeURIComponent(q.url.split('?')[0])); if(f.endsWith('/')) f+='index.html'; if(!existsSync(f)){s.writeHead(404);return s.end();} s.writeHead(200,{'content-type':types[path.extname(f)]||'application/octet-stream'}); s.end(readFileSync(f)); }).listen(8125);
+const srv = http.createServer((q,s)=>{ let f=path.join(root, decodeURIComponent(q.url.split('?')[0])); if(f.endsWith('/')) f+='index.html'; if(!existsSync(f)){s.writeHead(404);return s.end();} s.writeHead(200,{'content-type':types[path.extname(f)]||'application/octet-stream'}); s.end(readFileSync(f)); }).listen(Number(process.env.PORT) || 8125);
 const browser = await chromium.launch({ executablePath: CHROME, args:['--no-sandbox'] });
 const page = await browser.newPage();
 const errs=[]; page.on('pageerror', e => errs.push(e.message));
-await page.goto('http://localhost:8125/'); await page.waitForTimeout(1200);
+await page.goto(`http://localhost:${Number(process.env.PORT) || 8125}/`); await page.waitForTimeout(1200);
 await page.click('#auto');
 const seen = [];
 for (let i = 0; i < 12; i++) { await page.waitForTimeout(5000); const c = await page.locator('#captions').innerText(); seen.push(c.split('\n').at(-1).slice(0,40)); }

@@ -4,7 +4,8 @@
 // so two windows never answer the same question twice.
 import { initFirebase, SuggestionEngine } from '../../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../../core/memory.js';
-import { DEFAULT_SETTINGS, FALLBACK_REPLIES, migrateSettings } from '../../core/config.js';
+import { DEFAULT_SETTINGS, migrateSettings } from '../../core/config.js';
+import { SuggestionRunner } from '../../core/runner.js';
 import { mountControls } from '../../shared/controls.js';
 import { setPdfWorker } from '../../shared/extract.js';
 import { speakPrivately } from '../../shared/private-speech.js';
@@ -185,8 +186,16 @@ async function preview(text) {
 // ---------- Connection to the Meet tab ----------
 let port = null;
 let portTabId = null;
-let pending = null; // latest request waiting while Gemini Nano is busy
-let busy = false;
+
+// One request at a time, the newest question wins and the one it replaces
+// is cancelled; see core/runner.js.
+const runner = new SuggestionRunner({
+  getEngine: () => startEngine(),
+  peekEngine: () => engine,
+  onPartial: (job, replies) => safePost(job.port, { type: 'partial', id: job.id, replies }),
+  onResult: (job, res) => safePost(job.port, { type: 'result', id: job.id, ...res }),
+  onLog: (res) => controls.reportRun(res),
+});
 
 async function connectActiveTab() {
   const win = await chrome.windows.getCurrent();
@@ -207,17 +216,26 @@ async function connectActiveTab() {
     if (port !== p) return;
     port = null;
     portTabId = null;
+    runner.abort(); // nobody is waiting for the answer any more
     controls.setConnection(false);
     setTimeout(connectActiveTab, 1500);
   });
   p.postMessage({ type: 'voice', ready: voiceReady });
+  // Pause lengths come from Remote Config, which the engine has loaded.
+  startEngine().then(
+    (eng) => safePost(p, { type: 'timing', pauseMs: Number(eng.remote.pause_ms) || 1200, earlyMs: Number(eng.remote.speculate_ms) || 0 }),
+    () => {}
+  );
   controls.setConnection(true);
 }
 
 async function onTabMessage(p, msg) {
   if (msg?.type === 'suggest') {
-    pending = { id: msg.id, lines: msg.lines, port: p };
-    if (!busy) drain();
+    runner.request({ id: msg.id, lines: msg.lines, port: p });
+  } else if (msg?.type === 'speculate') {
+    runner.speculate(msg.lines);
+  } else if (msg?.type === 'unspeculate') {
+    runner.cancelEarly();
   } else if (msg?.type === 'speak') {
     try {
       safePost(p, { type: 'audio', ...(await synthesize(msg.text)) });
@@ -232,43 +250,6 @@ async function onTabMessage(p, msg) {
     if (!settings.dontLearn) memory.add(makeEvent(msg.event)).then(() => controls.renderMemory());
   }
 }
-
-// Gemini Nano handles one request at a time and an on-device request cannot
-// be cancelled, so: one in flight, and only the most recent one waiting.
-async function drain() {
-  busy = true;
-  try {
-    while (pending) {
-      const job = pending;
-      pending = null;
-      let res;
-      try {
-        const eng = await startEngine();
-        // A stalled model must not block the rest of the call.
-        res = await withTimeout(
-          eng.suggest(job.lines, {
-            onPartial: (replies) => !pending && safePost(job.port, { type: 'partial', id: job.id, replies }),
-          }),
-          TIMEOUT_MS
-        );
-        res.pauseMs = Number(eng.remote.pause_ms) || 1200;
-      } catch (e) {
-        console.warn('[Pipe Up] suggestion failed', e);
-        res = { replies: fallbackReplies(), route: 'fallback', reason: String(e?.message || e), error: true };
-      }
-      controls.reportRun(res);
-      if (!pending) safePost(job.port, { type: 'result', id: job.id, ...res });
-    }
-  } finally {
-    busy = false;
-  }
-}
-
-const TIMEOUT_MS = 20000;
-function withTimeout(promise, ms) {
-  return Promise.race([promise, new Promise((_, no) => setTimeout(() => no(new Error('No answer after ' + ms / 1000 + ' s')), ms))]);
-}
-const fallbackReplies = () => FALLBACK_REPLIES;
 
 function safePost(p, msg) {
   try {

@@ -4,6 +4,9 @@
 export const REMOTE_DEFAULTS = {
   prompt_version: '1',
   pause_ms: 1200,
+  // On-device only: start generating after this shorter silence and show the
+  // result at pause_ms if the captions did not change. 0 turns it off.
+  speculate_ms: 500,
   max_words: 12,
   examples_k: 3,
   briefing_chunks: 2,
