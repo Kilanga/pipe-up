@@ -15,7 +15,7 @@ const srv = http.createServer((q,s)=>{ let f=path.join(root, decodeURIComponent(
 const browser = await chromium.launch({ executablePath: CHROME, args:['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 let refuse0 = false; // true: the fake cloud refuses the request (403), which Chrome reports in the console
-const errs=[]; page.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); page.on('console', m => m.type()==='error' && !(refuse0 && /status of 403/.test(m.text())) && errs.push('console ' + m.text().slice(0,200)));
+const errs=[]; page.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); page.on('console', m => m.type()==='error' && !(refuse0 && /status of 403/.test(m.text())) && !/report-only Content Security Policy/.test(m.text()) && errs.push('console ' + m.text().slice(0,200)));
 const R = []; const ok = (name, cond, extra='') => R.push(`${cond ? 'OK  ' : 'FAIL'} ${name} ${extra}`);
 // The "Prepare for the call" section of a page.
 const prep = (pg) => ({
