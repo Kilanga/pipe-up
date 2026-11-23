@@ -9,7 +9,7 @@ each script.
 
 ## Optional local voice (`voice-worker.js` and `voice/` in the built extension)
 
-Used only when the user sets up "voice into the call". It runs entirely on the
+Used only when the user sets up the "Computer voice in the call". It runs entirely on the
 user's computer.
 
 | Component | In the extension | Version | License | Source |
@@ -34,7 +34,14 @@ Pipe Up does not compile it. According to that package's README, copied to
 - build steps: https://github.com/wide-video/piper-wasm, repeated in that README;
   the package itself: https://github.com/diffusion-studio/piper-wasm
 
-The package does not record which commits of these repositories were used.
+The package does not record which commits of these repositories were used, and
+it contains compiled files only: Pipe Up's build cannot make a source archive
+from it. The source code of the phonemizer is the one published in the
+repositories above. Anyone who received the extension can also ask for a copy
+of that source by opening an issue at https://github.com/Kilanga/pipe-up/issues:
+it will be provided at no charge, for at least three years after each release.
+If the npm package ever ships its source, the build adds it to the release as
+`espeak-ng-source.tar.gz`.
 
 `voice/piper_phonemize.data` is made by Pipe Up's build from
 `build/piper_phonemize.data` of the same package (SHA-256
@@ -44,8 +51,11 @@ by all languages and 14 pronunciation dictionaries (English, and the ones an
 English voice uses for words in Greek, Armenian, Devanagari, Bengali, Gurmukhi,
 Gujarati, Tamil, Telugu, Kannada, Malayalam, Sinhala, Georgian and Korean
 script), removes the other 99 dictionaries, and changes nothing inside the files
-it keeps. The script that does this is `scripts/phonemizer-data.mjs` in Pipe
-Up's source code: https://github.com/Kilanga/pipe-up.
+it keeps. So this data file is a modified version of the original: modified by
+Pipe Up's build, by removing dictionaries only, each time the extension is
+built (version 0.4.0: November 2026). The script that does this is
+`scripts/phonemizer-data.mjs` in Pipe Up's source code:
+https://github.com/Kilanga/pipe-up.
 
 The phonemizer is a separate program: the extension starts it with a text and
 reads the phonemes it prints.

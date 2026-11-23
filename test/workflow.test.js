@@ -15,5 +15,6 @@ test('release workflow: least privilege, no expression inside a shell script, ac
   const scripts = [...yml.matchAll(/^( +)(?:- )?run: (\|\n(?:(?:\1 {2,}.*)?\n)+|.*\n)/gm)].map((m) => m[2]);
   assert.ok(scripts.length >= 5, String(scripts.length));
   for (const s of scripts) assert.doesNotMatch(s, /\$\{\{/, s);
+  assert.match(release, /if \[ -f espeak-ng-source\.tar\.gz \]/, 'an extra source archive is published only if it exists');
   for (const [, ref] of yml.matchAll(/uses: \S+@(\S+)/g)) assert.match(ref, /^[0-9a-f]{40}$/, ref);
 });

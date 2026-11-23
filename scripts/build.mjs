@@ -94,6 +94,16 @@ cpSync(p('shared/panel.css'), demo + 'panel.css');
 cpSync(p('extension/icons/icon.svg'), demo + 'icon.svg');
 cpSync(worker, demo + 'pdf.worker.min.mjs');
 
+// GPL-3.0 phonemizer: if the npm package ever ships the source it was built
+// from, it goes into the release as its own archive. Today the package holds
+// compiled files only, so nothing is made here and THIRD_PARTY_NOTICES.md
+// says where the source is.
+const phonemizerSource = ['src', 'source', 'espeak-ng'].map((d) => 'node_modules/@diffusionstudio/piper-wasm/' + d).find((d) => existsSync(p(d)));
+if (phonemizerSource) {
+  execSync(`tar -czf ${JSON.stringify(p('dist/espeak-ng-source.tar.gz'))} -C ${JSON.stringify(p(phonemizerSource))} .`);
+  console.log('Built dist/espeak-ng-source.tar.gz from ' + phonemizerSource);
+}
+
 try {
   execSync('zip -qr ../pipe-up-extension.zip .', { cwd: ext });
   console.log('Built dist/extension, dist/demo and dist/pipe-up-extension.zip');
