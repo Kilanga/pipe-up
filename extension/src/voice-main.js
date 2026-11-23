@@ -107,14 +107,28 @@
     }
   };
 
-  const status = (ok, reason) => window.postMessage({ type: 'pipe-up:pcm-status', ok, reason }, ORIGIN);
   const ramp = (g, v) => {
     g.gain.cancelScheduledValues(ctx.currentTime);
     g.gain.setTargetAtTime(v, ctx.currentTime, 0.015);
   };
 
-  window.addEventListener('message', (e) => {
-    if (e.source !== window || e.origin !== ORIGIN || e.data?.type !== 'pipe-up:pcm') return;
+  // The content script hands over one end of a private channel. This listener
+  // was added before any script of the page and stops the event: the page
+  // never sees the port, so it cannot listen to the voice or report "voice
+  // failed" in our name. (A port the page makes up itself only lets it talk
+  // to itself: the content script listens to its own port only.)
+  window.addEventListener(
+    'message',
+    (e) => {
+      if (e.source !== window || e.origin !== ORIGIN || e.data?.type !== 'pipe-up:port' || !e.ports?.[0]) return;
+      e.stopImmediatePropagation();
+      const port = e.ports[0];
+      port.onmessage = (m) => onPcm(m.data || {}, (ok, reason) => port.postMessage({ id: m.data?.id, ok, reason }));
+    },
+    true
+  );
+
+  function onPcm(data, status) {
     const live = [...mixes].filter((m) => m.real.readyState === 'live');
     if (!live.length) return status(false, plainMics ? 'reload' : 'no-mic');
     if (ctx.state !== 'running') {
@@ -126,7 +140,7 @@
     // mode the reply then goes to the chat instead of being lost.
     let buf;
     try {
-      const { pcm, rate } = e.data;
+      const { pcm, rate } = data;
       buf = ctx.createBuffer(1, pcm.length, rate);
       buf.copyToChannel(pcm, 0);
     } catch {
@@ -155,5 +169,5 @@
         }
       });
     queue = queue.then(play, play);
-  });
+  }
 })();

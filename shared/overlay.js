@@ -17,13 +17,14 @@ const CSS = `
 .badge.in_cloud { background: #1e3a8a; color: #bfdbfe; }
 .badge.blocked, .badge.fallback { background: #713f12; color: #fde68a; }
 .sp { flex: 1; }
-.icon { background: none; border: 0; color: #d4d4d8; cursor: pointer; font-size: 1em; padding: 2px 6px; border-radius: 6px; }
+.icon { background: none; border: 0; color: #d4d4d8; cursor: pointer; font-size: 1em; padding: 2px 6px; border-radius: 6px; min-width: 24px; min-height: 24px; }
 .icon:hover { background: #3f3f46; }
-button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
 .body { padding: 10px; display: grid; gap: 8px; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-select, input[type=text] { font: inherit; color: inherit; background: #09090b; border: 1px solid #52525b; border-radius: 8px; padding: 6px 8px; }
-input[type=text] { width: 100%; box-sizing: border-box; }
+select, .typed { font: inherit; color: inherit; background: #09090b; border: 1px solid #52525b; border-radius: 8px; padding: 6px 8px; }
+/* One row that grows with the text, so a reply being edited is never clipped. */
+.typed { display: block; width: 100%; box-sizing: border-box; resize: none; field-sizing: content; max-height: 8em; }
 label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .86em; color: #d4d4d8; }
 .line { font-size: .9em; color: #a1a1aa; min-height: 1.4em; }
 .line b { color: #e4e4e7; font-weight: 600; }
@@ -33,7 +34,7 @@ label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .
 .card:hover { border-color: #a78bfa; }
 .card.sel { border-color: #a78bfa; background: #2e1065; }
 .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: #3f3f46; font-weight: 700; font-size: .85em; }
-.tag { display: block; font-size: .72em; color: #a1a1aa; margin-top: 2px; }
+.tag { display: block; font-size: .86em; color: #a1a1aa; margin-top: 2px; }
 .tag.briefing { color: #c4b5fd; }
 .preview { background: #2e1065; border: 1px solid #7c3aed; border-radius: 10px; padding: 8px; }
 .preview .hint { font-size: .78em; color: #ddd6fe; margin-top: 4px; }
@@ -44,6 +45,7 @@ label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .
 .ask { font: inherit; width: 100%; color: #18181b; background: #c4b5fd; border: 0; border-radius: 10px; padding: 7px; cursor: pointer; font-weight: 600; }
 .self { font: inherit; width: 100%; color: #e4e4e7; background: #1f2937; border: 1px dashed #71717a; border-radius: 10px; padding: 7px; cursor: pointer; }
 .notice { font-size: .82em; color: #fde68a; }
+.notice:empty { display: none; }
 .muted { color: #a1a1aa; font-size: .82em; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 [hidden] { display: none !important; }
@@ -52,11 +54,13 @@ label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: .
 .pu.easy { font-family: Verdana, Tahoma, "Segoe UI", system-ui, sans-serif;
   font-size: calc(15.5px * var(--scale, 1)); line-height: 1.7; letter-spacing: .04em; word-spacing: .12em; }
 .pu.easy .card { padding: 10px; }
+/* Form controls do not inherit spacing by themselves. */
+.pu.easy button, .pu.easy select, .pu.easy textarea, .pu.easy input { letter-spacing: inherit; word-spacing: inherit; }
 .pu.easy .tag, .pu.easy .muted, .pu.easy .badge, .pu.easy .chip, .pu.easy .notice { font-size: .9em; }
 .pu.contrast { background: #000; color: #fff; border: 2px solid #fff; }
 .pu.contrast .head { background: #000; border-bottom: 2px solid #fff; }
 .pu.contrast .badge, .pu.contrast .num { background: #000; color: #fff; border: 1px solid #fff; }
-.pu.contrast .card, .pu.contrast .chip, .pu.contrast .self, .pu.contrast select, .pu.contrast input[type=text] { background: #000; color: #fff; border: 2px solid #fff; }
+.pu.contrast .card, .pu.contrast .chip, .pu.contrast .self, .pu.contrast select, .pu.contrast .typed { background: #000; color: #fff; border: 2px solid #fff; }
 .pu.contrast .card.sel, .pu.contrast .preview { background: #000; border: 3px solid #ffd60a; }
 .pu.contrast .card.sel .num { background: #ffd60a; color: #000; }
 .pu.contrast .tag, .pu.contrast .muted, .pu.contrast .line, .pu.contrast .hint, .pu.contrast label.toggle { color: #fff; }
@@ -78,7 +82,18 @@ const ROUTE_LABEL = {
 
 // Every handler of the panel goes through here. Only real user input counts:
 // an event made by a script in the page (`isTrusted` false) is ignored, so
-// the page can never pick, edit, send or dismiss a reply on its own.
+// a script of the page cannot pick, send or dismiss a reply with a synthetic
+// key or click.
+// Assistive technology: a screen reader in focus mode, a switch or voice
+// control send real keys and clicks through the system, which are trusted.
+// A screen reader's "activate" in browse mode asks the browser for the
+// element's default action instead; Chromium then makes the click itself
+// (Blink: AXObject::OnNativeClickAction, SimulatedClickCreationScope::
+// kFromAccessibility). We expect that click to be trusted, as it does not
+// come from a script, but could not confirm it from the Chromium sources at
+// hand: TO CHECK BY HAND with NVDA (browse mode, Enter on a suggestion) and
+// VoiceOver (VO+Space). If it were not trusted, this filter would have to
+// let through clicks that follow a trusted focus of the same element.
 function el(tag, attrs = {}, ...children) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -99,10 +114,12 @@ function el(tag, attrs = {}, ...children) {
  * @param {() => void} [cb.onRequest] "Suggest replies now" (on-demand mode)
  * @param {() => void} [cb.onOpenPanel]
  * @param {object} [o]
- * @param {boolean} [o.closed] closed shadow root: scripts of the page cannot read the
- *        suggestions, the quick phrases or the "tell others" line. The extension uses it
- *        in Meet. The hosted demo keeps an open root: it is our own page, with nothing
- *        to hide from itself, and its end-to-end checks read the panel through it.
+ * @param {boolean} [o.closed] closed shadow root: the panel's DOM (suggestions, quick
+ *        phrases, "tell others" line) is not reachable from the page's scripts. The
+ *        extension uses it in Meet. Known limit: a page script can still ask the browser
+ *        whether a given text is displayed (window.find()), so this hides the DOM, it is
+ *        not a secrecy guarantee. The hosted demo keeps an open root: it is our own page,
+ *        with nothing to hide from itself, and its end-to-end checks read the panel through it.
  */
 export function createOverlay(cb, { mount = document.documentElement, position = null, inline = false, closed = false } = {}) {
   const host = el('div', { id: 'pipe-up-overlay' });
@@ -122,33 +139,56 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   const status = el('div', { class: 'muted', role: 'status', 'aria-live': 'polite' }, '');
   const cards = el('ul', { class: 'cards', 'aria-label': 'Suggested replies' });
   const preview = el('div', { class: 'preview', hidden: true });
-  const notice = el('div', { class: 'notice', role: 'status', 'aria-live': 'polite', hidden: true });
-  const typed = el('input', {
-    type: 'text',
+  // Stays in the page, empty: a live region that appears together with its
+  // text is not always announced.
+  const notice = el('div', { class: 'notice', role: 'status', 'aria-live': 'polite' });
+  const typed = el('textarea', {
+    class: 'typed',
+    rows: '1',
     placeholder: 'Write your own reply, Enter to send',
     'aria-label': 'Write your own reply',
     onkeydown: (e) => {
       e.stopPropagation();
       if (e.isComposing || e.keyCode === 229) return; // IME composition in progress
+      if (e.key === 'Enter') e.preventDefault(); // one reply, one line
       if (e.key === 'Enter' && typed.value.trim()) {
-        e.preventDefault();
-        const text = typed.value.trim();
+        const text = typed.value.replace(/\s+/g, ' ').trim();
         const from = state.editingFrom;
         const original = from != null ? state.replies[from]?.text : null;
         if (from != null && text === original) send({ text, action: 'picked', choice: from + 1 });
         else if (from != null) send({ text, action: 'edited', choice: from + 1 });
         else send({ text, action: 'typed' });
-        typed.value = '';
+        setTyped('');
       } else if (e.key === 'Escape') {
-        typed.value = '';
+        setTyped('');
         state.editingFrom = null;
         typed.blur();
+        renderCards(); // the preview of the selected reply comes back
       }
     },
   });
+  // The page cannot reach the field, but document.execCommand('insertText')
+  // acts on whatever has the focus, even inside a closed root. A real edit
+  // (key, paste, drop, IME, autocorrect) is announced by a trusted
+  // `beforeinput`; a scripted one is not: it is undone. Neither event leaves
+  // the field, so no script of the page runs between the two.
+  let fieldValue = '';
+  let userEdit = false;
+  const setTyped = (v) => (typed.value = fieldValue = v);
+  typed.addEventListener('beforeinput', (e) => {
+    e.stopPropagation();
+    userEdit = e.isTrusted;
+  });
+  typed.addEventListener('input', (e) => {
+    e.stopPropagation();
+    if (userEdit) fieldValue = typed.value;
+    else typed.value = fieldValue;
+    userEdit = false;
+  });
   const ask = el('button', { class: 'ask', hidden: true, onclick: () => cb.onRequest?.() }, 'Suggest replies (Alt+S)');
   const fillers = el('div', { class: 'fillers', role: 'group', 'aria-label': 'Quick phrases' });
-  const selfBtn = el('button', { class: 'self', onclick: () => spoke() }, '4 — I answered myself');
+  // Key 4 only acts while suggestions are shown: the label says so (renderCards).
+  const selfBtn = el('button', { class: 'self', onclick: () => spoke() }, 'I answered myself');
   const panel = el('section', { class: 'pu', role: 'region', 'aria-label': 'Pipe Up' });
   const minBtn = el(
     'button',
@@ -172,7 +212,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
     el(
       'div',
       { class: 'body' },
-      el('div', { class: 'row' }, output, el('label', { class: 'toggle' }, dontLearn, "Don't learn from this call")),
+      el('div', { class: 'row' }, output, el('label', { class: 'toggle' }, dontLearn, "Don't learn from my replies")),
       line,
       keysHint,
       status,
@@ -208,14 +248,21 @@ export function createOverlay(cb, { mount = document.documentElement, position =
           {},
           el(
             'button',
-            { class: 'card' + (state.selected === i ? ' sel' : ''), 'aria-pressed': String(state.selected === i), onclick: () => select(i) },
+            // The number is decoration for the eye; the key is announced as a shortcut.
+            { class: 'card' + (state.selected === i ? ' sel' : ''), 'aria-pressed': String(state.selected === i), 'aria-keyshortcuts': String(i + 1), onclick: () => select(i) },
             el('span', { class: 'num', 'aria-hidden': 'true' }, String(i + 1)),
-            el('span', {}, r.text, el('span', { class: 'tag ' + r.source }, r.source === 'briefing' ? 'From your briefing' : 'General reply'))
+            el('span', {}, r.text, r.source === 'briefing' ? el('span', { class: 'tag briefing' }, 'From your briefing') : null)
           )
         )
       )
     );
-    if (state.selected == null) {
+    selfBtn.textContent = state.replies.length ? '4 — I answered myself' : 'I answered myself';
+    if (state.replies.length) selfBtn.setAttribute('aria-keyshortcuts', '4');
+    else selfBtn.removeAttribute('aria-keyshortcuts');
+    // One key hint at a time: the preview carries it while a reply is selected.
+    keysHint.hidden = state.selected != null;
+    // While editing, the reply is in the field: no second copy above it.
+    if (state.selected == null || state.editingFrom != null) {
       preview.hidden = true;
     } else {
       preview.hidden = false;
@@ -244,7 +291,8 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   function editSelected() {
     if (state.selected == null) return;
     state.editingFrom = state.selected;
-    typed.value = state.replies[state.selected].text;
+    setTyped(state.replies[state.selected].text);
+    renderCards();
     typed.focus();
     typed.setSelectionRange(typed.value.length, typed.value.length); // cursor at the end, ready to adjust
   }
@@ -285,10 +333,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   }
 
   function flash(msg, ms = 4500) {
-    notice.hidden = false;
     notice.textContent = msg;
     clearTimeout(flash.t);
-    flash.t = setTimeout(() => (notice.hidden = true), ms);
+    flash.t = setTimeout(() => (notice.textContent = ''), ms);
   }
 
   // Keys are only taken when the focus is not in a field and not on one of
@@ -298,6 +345,13 @@ export function createOverlay(cb, { mount = document.documentElement, position =
   function focusIsNeutral() {
     const ae = document.activeElement;
     return !ae || ae === document.body || ae === document.documentElement || ae === host;
+  }
+  // Inside the panel, Enter and Tab are shortcuts only on the selected reply
+  // itself. On any other control of the panel (a quick phrase, Minimize,
+  // another reply) they keep their normal meaning: press it, move on.
+  function focusAllowsShortcut() {
+    const inside = root.activeElement;
+    return inside ? inside === root.querySelectorAll('.card')[state.selected] : focusIsNeutral();
   }
   function inDialog() {
     const ae = document.activeElement;
@@ -324,11 +378,17 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       const d = digitOf(e);
       let text = null;
       if (d && d <= 3) text = state.settings.fillers?.[d - 1];
-      if (k === 'd' || e.code === 'KeyD') text = state.settings.disclosure || null;
+      const tellOthers = k === 'd' || e.code === 'KeyD';
+      if (tellOthers) text = state.settings.disclosure || null;
       if (text) {
         e.preventDefault();
         e.stopPropagation();
         sendFiller(text);
+      } else if (tellOthers) {
+        // The shortcut is ours even with no line written: say why nothing was sent.
+        e.preventDefault();
+        e.stopPropagation();
+        flash('No "Tell others" line yet. Write one in Settings.');
       } else if ((k === 's' || e.code === 'KeyS') && cb.onRequest) {
         e.preventDefault();
         e.stopPropagation();
@@ -363,8 +423,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       }
       return;
     }
-    // Enter and Tab would act on a focused Meet control: only when focus is neutral or ours.
-    if (!focusIsNeutral()) return;
+    // Enter and Tab would act on a focused control, Meet's or ours: only
+    // when focus is neutral or on the selected reply.
+    if (!focusAllowsShortcut()) return;
     if (e.key === 'Enter' && state.selected != null) {
       e.preventDefault();
       e.stopPropagation();
@@ -385,7 +446,7 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       // A suggestion opened for editing but not changed belongs to the old
       // question: withdraw it. Text the user changed is theirs: keep it.
       if (state.editingFrom != null && typed.value.trim() === state.replies[state.editingFrom]?.text) {
-        typed.value = '';
+        setTyped('');
         typed.blur();
       }
       state.replies = [];
@@ -443,9 +504,9 @@ export function createOverlay(cb, { mount = document.documentElement, position =
       panel.classList.toggle('contrast', Boolean(s.highContrast));
       panel.classList.toggle('still', Boolean(s.reduceMotion));
       const chips = (s.fillers || []).map((f, i) =>
-        el('button', { class: 'chip' + (i === 0 ? ' hold' : ''), title: `Alt+${i + 1}`, onclick: () => sendFiller(f) }, f)
+        el('button', { class: 'chip' + (i === 0 ? ' hold' : ''), title: `Alt+${i + 1}`, 'aria-keyshortcuts': `Alt+${i + 1}`, onclick: () => sendFiller(f) }, f)
       );
-      if (s.disclosure) chips.push(el('button', { class: 'chip', title: 'Alt+D', onclick: () => sendFiller(s.disclosure) }, s.disclosure));
+      if (s.disclosure) chips.push(el('button', { class: 'chip', title: 'Alt+D', 'aria-keyshortcuts': 'Alt+D', onclick: () => sendFiller(s.disclosure) }, s.disclosure));
       fillers.replaceChildren(...chips);
     },
     clear: () => clear(),

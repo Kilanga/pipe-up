@@ -15,6 +15,12 @@ await page.goto(`http://localhost:${Number(process.env.PORT) || 8125}/`); await 
 await page.click('#auto');
 const seen = [];
 for (let i = 0; i < 12; i++) { await page.waitForTimeout(5000); const c = await page.locator('#captions').innerText(); seen.push(c.split('\n').at(-1).slice(0,40)); }
-console.log([...new Set(seen)].join(' || '));
-console.log('button:', await page.locator('#auto').innerText(), 'errors:', errs.join(';'));
+const lines = [...new Set(seen)];
+const button = await page.locator('#auto').innerText();
+const R = []; const ok = (n, c, x = '') => R.push(`${c ? 'OK  ' : 'FAIL'} ${n} ${x}`);
+ok('auto-play: the five lines of the call are played in order', lines.length === 5 && lines[0].startsWith('Maya') && lines[4].includes('Anything else'), lines.join(' || '));
+ok('auto-play: it stops by itself at the end of the script', button === 'Auto-play', button);
+console.log(R.join('\n')); console.log('ERRORS:', errs.join('\n') || 'none');
+// A failed check or an unexpected error makes the script fail (CI, pre-commit).
+if (R.some((l) => l.startsWith('FAIL')) || errs.length) process.exitCode = 1;
 await browser.close(); srv.close();

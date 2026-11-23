@@ -29,7 +29,7 @@ const overlay = createOverlay({
   onOpenPanel: () => chrome.runtime.sendMessage({ type: 'pu:open-panel' }),
   // Read in the side panel, on this computer only (never into the call).
   onHear: (text) => port?.postMessage({ type: 'preview', text }),
-}, { closed: true }); // Meet's page scripts cannot read or drive the panel
+}, { closed: true }); // the panel's DOM is not reachable from Meet's page scripts
 
 chrome.storage.local.get('settings').then(({ settings: s }) => applySettings(s));
 chrome.storage.onChanged.addListener((changes) => {
@@ -56,6 +56,13 @@ chrome.runtime.onConnect.addListener((p) => {
   p.onDisconnect.addListener(() => {
     if (port !== p) return;
     port = null;
+    // "Voice only": a reply whose audio had not come back yet would be lost
+    // with the panel. It goes to the chat instead.
+    const lost = [...speaking].filter(([, s]) => !s.inPage);
+    for (const [id, s] of lost) {
+      speaking.delete(id);
+      if (settings.outputMode === 'voice') fallbackToChat(s.text, 'The Pipe Up side panel closed before the voice was ready.');
+    }
     // A question sent to the closed panel will not be answered.
     if (overlay.isThinking()) {
       overlay.clear();
@@ -79,8 +86,8 @@ function onPanelMessage(msg) {
   if (msg.type === 'timing') return watcher.setTiming(msg);
   if (msg.type === 'audio') return playInCall(msg);
   if (msg.type === 'speak-failed') {
-    const text = lastSpoken;
-    lastSpoken = null;
+    const text = speaking.get(msg.id)?.text;
+    speaking.delete(msg.id);
     if (settings.outputMode === 'voice' && text) return fallbackToChat(text, 'The voice could not read this reply.');
     return overlay.notice('The voice could not read this reply.');
   }
@@ -109,33 +116,46 @@ function request(lines) {
 }
 
 // ---------- Output ----------
-let lastSpoken = null; // the reply being spoken, until the page reports back
+// Replies on their way to the call: asked of the side panel, then (inPage)
+// handed to the page script, until that one reports back.
+let speakId = 0;
+const speaking = new Map(); // id -> { text, inPage }
 async function deliver(text) {
   const wantsVoice = settings.outputMode !== 'chat';
   const canSpeak = wantsVoice && voiceReady && port;
   if (canSpeak) {
-    lastSpoken = text;
-    port.postMessage({ type: 'speak', text });
+    const id = ++speakId;
+    speaking.set(id, { text, inPage: false });
+    speaking.delete(id - 20);
+    port.postMessage({ type: 'speak', id, text });
   }
   if (settings.outputMode === 'voice' && canSpeak) return;
   const r = await sendToMeetChat(text);
   if (!r.ok) {
     overlay.notice(r.copied ? 'Could not post in the chat: your reply is in the clipboard.' : 'Could not post in the chat. Please type it there.');
   } else if (wantsVoice && !canSpeak) {
-    overlay.notice('The voice is not set up yet (side panel, Live tab): your reply went to the chat.');
+    overlay.notice(port ? 'The voice is not set up yet (side panel, Live tab): your reply went to the chat.' : 'The Pipe Up side panel is closed, so the voice cannot speak: your reply went to the chat.');
   }
 }
 
 // The side panel synthesizes the voice; the page script mixes it into the
 // microphone that Meet uses (voice-main.js).
-function playInCall({ pcm16, rate }) {
+function playInCall({ id, pcm16, rate }) {
+  const entry = speaking.get(id);
+  if (entry) entry.inPage = true;
   const bin = atob(pcm16);
   const i16 = new Int16Array(bin.length / 2);
   for (let i = 0; i < i16.length; i++) i16[i] = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16 >> 16;
   const pcm = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) pcm[i] = i16[i] / 0x7fff;
-  window.postMessage({ type: 'pipe-up:pcm', pcm, rate }, location.origin);
+  voicePort.postMessage({ id, pcm, rate });
 }
+// A private channel to voice-main.js, handed over once, now. A script of the
+// page never sees it (see there): it cannot listen to the voice, and it
+// cannot report "the voice failed" in our name, which in "voice only" mode
+// would send the reply being spoken to the chat.
+const { port1: voicePort, port2: pagePort } = new MessageChannel();
+window.postMessage({ type: 'pipe-up:port' }, location.origin, [pagePort]);
 const VOICE_PROBLEMS = {
   muted: 'You are muted in Meet: unmute so others can hear the voice.',
   'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
@@ -143,15 +163,14 @@ const VOICE_PROBLEMS = {
   'no-mic': 'Join the call with your microphone on, then the voice can read your reply in the call.',
   'bad-audio': 'The voice could not read this reply.',
 };
-window.addEventListener('message', (e) => {
-  if (e.source !== window || e.origin !== location.origin || e.data?.type !== 'pipe-up:pcm-status') return;
-  const text = lastSpoken;
-  lastSpoken = null;
-  if (e.data.ok) return;
+voicePort.onmessage = (e) => {
+  const text = speaking.get(e.data?.id)?.text;
+  speaking.delete(e.data?.id);
+  if (e.data?.ok) return;
   // "Voice only" must not lose the reply: post it in the chat instead.
   if (settings.outputMode === 'voice' && text) fallbackToChat(text, VOICE_PROBLEMS[e.data.reason] || VOICE_PROBLEMS['no-mic']);
   else overlay.notice(VOICE_PROBLEMS[e.data.reason] || VOICE_PROBLEMS['no-mic']);
-});
+};
 async function fallbackToChat(text, why) {
   const r = await sendToMeetChat(text);
   overlay.notice(why + (r.ok ? ' Your reply went to the chat.' : ' Your reply is not sent: please type it.'));
