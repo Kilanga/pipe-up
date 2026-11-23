@@ -37,7 +37,7 @@ Pipe Up starts from those two ideas. It reads the captions Google Meet already s
 - **Three short replies** (12 words at most) after a pause in the captions, or only when you ask (**Alt+S**, "on-demand" mode). Keys **1 / 2 / 3** to pick, **Enter** to send, **Tab** to edit before sending, **Esc** to cancel.
 - **Key 4, "I answered myself":** Pipe Up steps aside and keeps following the conversation.
 - **Briefing:** before the call, list *My positions*, write notes and/or upload a document (.txt, .md, .pdf, read locally with pdf.js). Replies that use it are labelled *From your briefing*. The model is instructed never to invent facts, numbers or commitments; check before you send.
-- **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 at most). You can switch learning off, see what was learned and delete it. Nothing you say out loud is recorded.
+- **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 at most). Each one is kept with the suggestions that were shown and up to 20 key words of the caption line it answered, not the sentence. You can switch learning off, see what was learned and delete it. No audio is recorded.
 - **Display and reading options** (all off by default): *Easy reading* (more spacing, larger text, replies of 8 words at most), *One suggestion at a time*, *Hear the suggestions* (in your own headphones only, never into the call), *High contrast* (nothing relies on color alone), *Reduce motion* (the system setting is always followed).
 - **Output:** Meet chat, a synthetic voice in the call, or both. The voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet mutes it too.
 
@@ -51,7 +51,7 @@ Pipe Up has no stealth mode.
 - **Alt+D** lets you tell colleagues, in your own words, that you stutter and how you use Pipe Up.
 - Nothing in the code hides the panel from screen sharing or from anyone.
 
-For colleagues, nothing changes on their side and nothing they say is recorded.
+For colleagues, nothing changes on their side. Their voice is never recorded and no transcript is kept: the last caption lines are held in memory during the call, and when you send a reply, up to 20 key words of the line you answered are stored with it on your computer (nothing with *Don't learn from this call*).
 
 ## How Firebase AI Logic is used
 
@@ -81,13 +81,14 @@ const { stream, response } = await deviceModel.generateContentStream(prompt); //
   | Data | On device | Cloud (after consent) |
   | --- | --- | --- |
   | Last caption lines | 3 | 2 |
+  | Speakers' display names | yes | never: replaced by "Speaker A", "Speaker B", "Me" |
   | *My positions* and briefing excerpts | yes | only with a second, separate opt-in |
   | Your past replies (style examples) | yes | never |
   | Audio | never | never |
 
 - **Streaming** on both paths with the same JSON schema; one request at a time, the newest question wins (a running Gemini Nano request cannot be cancelled).
-- **Prompt safety:** captions and documents are fenced as data, with length limits, so text in a shared document or a caption is not treated as an instruction.
-- **App Check:** reCAPTCHA Enterprise on the hosted demo, limited-use tokens on every cloud request. In the extension, a debug token entered by the developer and kept only in the extension's own storage (Manifest V3 extensions cannot load reCAPTCHA's remote script). On-device suggestions need no token and no network.
+- **Prompt safety:** captions, speakers' names and documents are fenced as data, with length limits. This reduces the risk that text in a shared document, a caption or a participant's name is taken as an instruction; it cannot rule it out. So the output is checked too: a reply is cut at 160 characters, a reply with a link or an e-mail address that is not in your briefing is dropped, *From your briefing* is shown only when the reply shares words with your briefing, and nothing is sent without a keypress.
+- **App Check:** reCAPTCHA Enterprise on the hosted demo, loaded only when a cloud request is first made; limited-use tokens on every cloud request. In the extension, a debug token entered by the developer and kept only in the extension's own storage (Manifest V3 extensions cannot load reCAPTCHA's remote script). On-device suggestions need no token and no network.
 - **Remote Config:** prompt variant (`prompt_version`: `1` plain, `2` warm, `3` professional), pause length, maximum words, style examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
 - **Not generative AI:** the optional voice is a local speech synthesizer (Piper, running in WebAssembly). No other model API is called.
 
@@ -139,7 +140,7 @@ Without Gemini Nano, the extension offers the quick phrases, your own typed repl
 
 ## Privacy
 
-Pipe Up reads the captions Meet already shows. It never records audio and keeps only the last few caption lines in memory. For the voice, it mixes a synthetic voice into your microphone stream only while it plays. No analytics. Network use: Firebase (Remote Config; the Gemini API only on the consent-based cloud path) and one download of the voice model from Hugging Face if you set up the voice. The hosted demo also loads reCAPTCHA Enterprise for App Check. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
+Pipe Up reads the captions Meet already shows. It never records audio. The last few caption lines are held in memory; with each reply you send, up to 20 key words of the line it answered are stored on your computer (see *Memory* tab), never the sentence. For the voice, it mixes a synthetic voice into your microphone stream only while it plays. No analytics. Network use: Firebase (Remote Config and Firebase Installations, which gives the browser a random ID, each time Pipe Up starts, before any consent; the Gemini API only on the consent-based cloud path) and one download of the voice model from Hugging Face if you set up the voice. The hosted demo also loads reCAPTCHA Enterprise for App Check (it sets a Google cookie), only when a cloud request is made. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
 
 ## Known limits
 
