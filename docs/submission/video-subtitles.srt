@@ -1,0 +1,188 @@
+1
+00:00:00,600 --> 00:00:07,920
+Pipe Up is a backup channel for people who
+stutter, in Google Meet.
+
+2
+00:00:08,600 --> 00:00:14,463
+In a video call, a block can look like a
+frozen connection.
+
+3
+00:00:14,543 --> 00:00:18,920
+People talk over you, and the moment is
+gone.
+
+4
+00:00:19,600 --> 00:00:23,520
+Pipe Up gives you one key to hold the
+floor,
+
+5
+00:00:23,600 --> 00:00:26,320
+and short replies from your own notes.
+
+6
+00:00:26,400 --> 00:00:30,720
+Firebase AI Logic runs them on Gemini
+Nano, on your device.
+
+7
+00:00:30,800 --> 00:00:33,920
+The cloud is used only if you agree.
+
+8
+00:00:34,600 --> 00:00:38,990
+This scene is staged. Sam is in a block.
+
+9
+00:00:39,070 --> 00:00:41,490
+[Colleague] Sam, are you frozen?
+
+10
+00:00:41,570 --> 00:00:46,457
+Sam presses Alt+1. Everyone sees his
+message in the chat.
+
+11
+00:00:46,537 --> 00:00:51,920
+He finishes his sentence himself, then
+presses 4: I answered myself.
+
+12
+00:00:52,600 --> 00:00:58,252
+Before the call, Sam writes his positions
+and notes, or adds a document.
+
+13
+00:00:58,332 --> 00:01:02,220
+Prepare for the call turns them into
+likely questions,
+
+14
+00:01:02,300 --> 00:01:04,865
+with short answers he can edit.
+
+15
+00:01:04,945 --> 00:01:08,393
+The cloud does this once, after he
+confirms.
+
+16
+00:01:08,473 --> 00:01:11,920
+During the call, the device does the rest.
+
+17
+00:01:12,600 --> 00:01:15,112
+A question about the deadline.
+
+18
+00:01:15,192 --> 00:01:18,740
+After the pause, three short replies
+appear.
+
+19
+00:01:18,820 --> 00:01:24,442
+This one comes from Sam's briefing. The
+badge says On device.
+
+20
+00:01:24,522 --> 00:01:29,108
+Nothing is sent until Sam presses 1, then
+Enter.
+
+21
+00:01:29,188 --> 00:01:34,291
+The log shows where each reply was
+generated, and why.
+
+22
+00:01:34,371 --> 00:01:37,920
+It reads inferenceSource from Firebase AI
+Logic.
+
+23
+00:01:38,600 --> 00:01:43,073
+On a computer without Gemini Nano, Pipe Up
+asks first.
+
+24
+00:01:43,153 --> 00:01:49,903
+If Sam agrees, only the last two caption
+lines go to Gemini in the cloud,
+
+25
+00:01:49,983 --> 00:01:51,724
+protected by App Check.
+
+26
+00:01:51,804 --> 00:01:54,456
+His briefing needs a second opt-in.
+
+27
+00:01:54,536 --> 00:01:57,643
+His past replies never leave the device.
+
+28
+00:01:57,723 --> 00:01:59,920
+Now the badge says Cloud.
+
+29
+00:02:00,600 --> 00:02:04,892
+Sam can also have a reply read aloud in
+the call.
+
+30
+00:02:04,972 --> 00:02:07,675
+The voice is made on his computer.
+
+31
+00:02:07,755 --> 00:02:12,842
+It is clearly synthetic, and it is not a
+copy of his voice.
+
+32
+00:02:12,922 --> 00:02:16,342
+[Synthetic voice] REPLACE WITH THE EXACT
+WORDS SPOKEN
+
+33
+00:02:16,422 --> 00:02:19,920
+With Alt+D, he tells colleagues in his own
+words.
+
+34
+00:02:20,600 --> 00:02:23,120
+Reading under pressure is hard.
+
+35
+00:02:23,200 --> 00:02:28,320
+So there is easy reading, one suggestion
+at a time,
+
+36
+00:02:28,400 --> 00:02:30,920
+high contrast and reduced motion.
+
+37
+00:02:31,600 --> 00:02:34,032
+Pipe Up has no stealth mode.
+
+38
+00:02:34,112 --> 00:02:39,476
+What it sends is visible or audible to
+everyone, as coming from Sam.
+
+39
+00:02:39,556 --> 00:02:43,664
+It has not yet been tested with people who
+stutter.
+
+40
+00:02:43,744 --> 00:02:44,920
+That comes next.
+
+41
+00:02:45,600 --> 00:02:49,920
+Pipe Up. Your voice first, and a backup
+when you need it.
