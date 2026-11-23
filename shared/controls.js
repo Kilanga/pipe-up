@@ -213,7 +213,7 @@ export function mountControls(root, o) {
   });
   const briefInfo = h('p', { class: 'muted', role: 'status' });
   put(panes.Briefing, 
-    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Everything stays on this computer.'),
+    h('p', {}, 'Prepare the call: Pipe Up grounds its suggestions in what you wrote and is instructed not to invent facts. Check before you send. Your briefing stays on this computer unless you decide otherwise, below or in the Live tab.'),
     h('label', { class: 'field' }, h('b', {}, 'My positions'), h('span', { class: 'muted' }, 'Always used first. One per line.'), positions),
     h('label', { class: 'field' }, h('b', {}, 'Write or paste your notes'), notes),
     h('div', { class: 'field' }, h('b', {}, 'Upload a document'), h('span', { class: 'muted' }, '.txt, .md or .pdf, read on this computer'), file, docName, docText),

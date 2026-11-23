@@ -150,7 +150,7 @@ export class SuggestionEngine {
     const inCloudParams = {
       model: this.remote.cloud_model,
       systemInstruction: rules,
-      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: PREP_JSON_SCHEMA, temperature: 0.2, maxOutputTokens: 1024 },
+      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: PREP_JSON_SCHEMA, temperature: 0.2, maxOutputTokens: 2048 },
     };
     this.prepDeviceParams = onDeviceParams;
     // The fourth hybrid mode, for the work done before the call:
@@ -169,8 +169,9 @@ export class SuggestionEngine {
   }
 
   /**
-   * Chrome's status for Gemini Nano. Asked once per request before; now the
-   * answer "available" is kept until a device call fails.
+   * Chrome's status for Gemini Nano. Once it is "available" the answer is
+   * kept, to save one availability() call per request, until a device call
+   * fails. (The SDK still makes its own check before each on-device call.)
    */
   async #status() {
     if (this.forceCloud) return 'unavailable';
