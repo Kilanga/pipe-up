@@ -523,6 +523,7 @@ export function mountControls(root, o) {
   const mode = h('select', {}, h('option', { value: 'auto' }, 'After each pause'), h('option', { value: 'onDemand' }, 'Only when I ask (Alt+S)'));
   const myName = h('input', { type: 'text', placeholder: 'e.g. Sam Taylor', autocomplete: 'off' });
   const fillerInputs = [0, 1, 2].map(() => h('input', { type: 'text' }));
+  const raiseHandBox = h('input', { type: 'checkbox', onchange: (e) => o.settings.set({ raiseHandOnHold: e.target.checked }) });
   const disclosure = h('input', { type: 'text', placeholder: 'e.g. I stutter. Sometimes I answer in the chat, or a computer voice reads my reply.' });
   const scale = h('select', {}, ...[['1', 'Normal'], ['1.15', 'Large'], ['1.3', 'Extra large']].map(([v, l]) => h('option', { value: v }, l)));
   const token = h('input', { type: 'password', placeholder: 'App Check debug token (optional)', autocomplete: 'off' });
@@ -545,6 +546,15 @@ export function mountControls(root, o) {
     h('h2', {}, 'Quick phrases'),
     h('p', { class: 'muted' }, 'Sent at once with a click or Alt+1, Alt+2, Alt+3. The first one holds the floor while you speak.'),
     ...fillerInputs.map((inp, i) => h('label', { class: 'field' }, `Phrase ${i + 1}`, inp)),
+    // Meet only: the demo call has no raise-hand button.
+    o.demo
+      ? null
+      : h(
+          'label',
+          { class: 'check' },
+          raiseHandBox,
+          h('span', {}, h('b', {}, 'Also raise my hand in Meet when I send "I\'m still speaking". '), 'Applies to your first quick phrase (Alt+1). Others see your hand raised, as when you click Meet\'s own button. Off by default.')
+        ),
     h('label', { class: 'field' }, 'Tell others, if you want to (Alt+D)', h('span', { class: 'muted' }, 'Optional and empty by default: your words, your choice.'), disclosure),
     h('label', { class: 'field' }, 'Text size', scale),
     h('h2', {}, 'Display and reading'),
@@ -590,6 +600,7 @@ export function mountControls(root, o) {
       scale.value = String(s.textScale || 1);
     }
     for (const [key, box] of Object.entries(displayBoxes)) box.checked = Boolean(s[key]);
+    raiseHandBox.checked = Boolean(s.raiseHandOnHold);
     root.classList.toggle('pu-easy', Boolean(s.easyReading));
     root.classList.toggle('pu-contrast', Boolean(s.highContrast));
     root.classList.toggle('pu-still', Boolean(s.reduceMotion));

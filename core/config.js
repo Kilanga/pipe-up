@@ -24,6 +24,8 @@ export const DEFAULT_SETTINGS = {
   // Quick phrases. The first one holds the floor during a block, as asked
   // for by people who stutter in co-design research (Wu et al., DIS 2024).
   fillers: ["I'm still speaking, one moment.", 'Could you repeat that, please?', "I'll answer in the chat."],
+  // Optional: also raise the hand in Meet when the first quick phrase is sent.
+  raiseHandOnHold: false,
   // Optional, empty by default: a one-click way to tell others, in your words.
   disclosure: '',
   textScale: 1,

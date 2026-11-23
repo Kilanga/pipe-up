@@ -16,6 +16,7 @@ const MEET_HTML = `<!doctype html><html><body>
 <button aria-pressed="false" aria-label="Chat with everyone" id="tog" onclick="this.setAttribute('aria-pressed','true');document.getElementById('chatp').hidden=false">Chat</button>
 <div id="chatp" hidden><ol id="msgs"></ol><div><textarea aria-label="Send a message" id="box"></textarea>
 <button aria-label="Send a message" onclick="const b=document.getElementById('box'); if(b.value.trim()){const li=document.createElement('li'); li.textContent=b.value; document.getElementById('msgs').append(li); b.value='';}">➤</button></div></div>
+<button aria-pressed="false" aria-label="Raise hand (ctrl + alt + h)" id="hand" data-clicks="0" onclick="const up=this.getAttribute('aria-pressed')!=='true';this.setAttribute('aria-pressed',String(up));this.setAttribute('aria-label',(up?'Lower':'Raise')+' hand (ctrl + alt + h)');this.dataset.clicks=Number(this.dataset.clicks)+1">✋</button>
 <div role="region" aria-label="Captions" id="cap"></div>
 <script>window.say=(who,t)=>{const d=document.createElement('div');d.innerText=who+'\\n'+t;document.getElementById('cap').append(d);}</script></body></html>`;
 await ctx.route('https://meet.google.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: MEET_HTML }));
@@ -43,6 +44,18 @@ m = await msgs(); const draft = await meet.inputValue('#box');
 ok('Alt+1 posts filler', m.at(-1)?.includes("still speaking"), m.at(-1));
 ok('user draft kept', draft === 'my draft', JSON.stringify(draft));
 await meet.fill('#box', '');
+// raise hand with "I'm still speaking": off by default, then on (to verify in a real Meet call)
+const hand = () => meet.evaluate(() => { const b = document.getElementById('hand'); return { up: b.getAttribute('aria-pressed') === 'true', clicks: Number(b.dataset.clicks) }; });
+ok('raise hand: not touched by default', (await hand()).clicks === 0);
+await panel.evaluate(() => document.getElementById('pu-tab-Settings').click());
+await panel.locator('label.check', { hasText: 'Also raise my hand in Meet' }).locator('input').check(); await meet.waitForTimeout(500);
+await meet.evaluate(() => document.body.focus());
+await meet.keyboard.press('Alt+1'); await meet.waitForTimeout(1200);
+ok('raise hand: raised with "I\'m still speaking"', (await hand()).up && (await hand()).clicks === 1, JSON.stringify(await hand()));
+await meet.keyboard.press('Alt+2'); await meet.waitForTimeout(1200);
+await meet.keyboard.press('Alt+1'); await meet.waitForTimeout(1200);
+ok('raise hand: other phrases do not touch it, and it is never lowered', (await hand()).up && (await hand()).clicks === 1, JSON.stringify(await hand()));
+await panel.locator('label.check', { hasText: 'Also raise my hand in Meet' }).locator('input').uncheck(); await meet.waitForTimeout(300);
 // display option from the panel reaches the overlay
 await panel.evaluate(() => document.getElementById('pu-tab-Settings').click());
 await panel.locator('label.check', { hasText: 'Easy reading' }).locator('input').check(); await meet.waitForTimeout(600);

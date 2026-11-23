@@ -1,6 +1,7 @@
 import { createOverlay } from '../../shared/overlay.js';
 import { watchCaptions, setMyName } from './meet-captions.js';
 import { sendToMeetChat } from './meet-chat.js';
+import { raiseHand } from './meet-hand.js';
 import { DEFAULT_SETTINGS, REMOTE_DEFAULTS } from '../../core/config.js';
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -13,6 +14,8 @@ const unsent = []; // learning events kept while the side panel is closed
 const overlay = createOverlay({
   onSend: async ({ text, action, choice, shown, context }) => {
     log({ action, reply: text, choice, shown, context });
+    // Optional: "I'm still speaking" (the first quick phrase) also raises the hand.
+    if (action === 'filler' && settings.raiseHandOnHold && text === settings.fillers?.[0]) raiseHand();
     await deliver(text);
   },
   onSpoke: ({ shown, context }) => log({ action: 'spoke', reply: '', shown, context }),
