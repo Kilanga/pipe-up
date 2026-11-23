@@ -4,9 +4,10 @@
 
 > **For judges (60 seconds)**
 > - **What it is:** a Chrome extension for Google Meet, plus a hosted demo that runs the same engine and the same in-call panel on a simulated call.
-> - **Try it:** open https://pipe-up-demo.web.app → click **1. Load Sam's sample briefing** → **Start the call** → press **1**, then **Enter**. Press **Alt+1** to hold the floor, **4** when you answered yourself.
+> - **Try it:** open https://pipe-up-demo.web.app → click **1. Load Sam's sample briefing** → **2. Prepare the answers** → **Prepare with the cloud** and confirm → **Start the call** → press **1**, then **Enter**. Press **Alt+1** to hold the floor, **4** when you answered yourself.
+> - **Cloud before the call, device during the call:** the cloud reads the briefing once, after an explicit confirmation, and prepares short answers. During the call, Gemini Nano uses them on the device.
 > - **No Gemini Nano on your computer?** Click **Try with the cloud** in the amber banner. The badge on the panel then reads *Cloud* instead of *On device*, and the *Live* tab logs the route of every request.
-> - **Where Firebase AI Logic is called:** [`core/engine.js`](core/engine.js) — `getAI()` in `initFirebase()`, three `getGenerativeModel()` instances (`ONLY_ON_DEVICE`, `PREFER_ON_DEVICE`, `ONLY_IN_CLOUD`), `generateContentStream()` in `#run()`, which reads `inferenceSource`. App Check and Remote Config are set up in the same file.
+> - **Where Firebase AI Logic is called:** [`core/engine.js`](core/engine.js) — `getAI()` in `initFirebase()`, `getGenerativeModel()` in all four modes (`ONLY_ON_DEVICE`, `PREFER_ON_DEVICE`, `ONLY_IN_CLOUD` in `#buildModels()`; `PREFER_IN_CLOUD` in `#buildPrepModels()`), `generateContentStream()` in `#run()` and `generateContent()` in `prepare()`, which both read `inferenceSource`. App Check and Remote Config are set up in the same file.
 > - **Status, plainly:** built solo during the hackathon. Not yet tested with people who stutter.
 
 <!-- SCREENSHOTS: real captures from a real Chrome go here (do not generate them).
@@ -37,9 +38,11 @@ Pipe Up starts from those two ideas. It reads the captions Google Meet already s
 - **Three short replies** (12 words at most) after a pause in the captions, or only when you ask (**Alt+S**, "on-demand" mode). Keys **1 / 2 / 3** to pick, **Enter** to send, **Tab** to edit before sending, **Esc** to cancel.
 - **Key 4, "I answered myself":** Pipe Up steps aside and keeps following the conversation.
 - **Briefing:** before the call, list *My positions*, write notes and/or upload a document (.txt, .md, .pdf, read locally with pdf.js). Replies that use it are labelled *From your briefing*. The model is instructed never to invent facts, numbers or commitments; check before you send.
+- **Prepare for the call:** one click turns the briefing into up to 6 likely questions, each with a short answer you can edit, add to or delete. *Prepare with the cloud* shows what will be sent and asks you to confirm, then makes one request; it does not turn on the cloud for the call. *Prepare on this computer* does the same with Gemini Nano, part by part, with a *Stop* button. A prepared answer that contains a number absent from your briefing is discarded. During the call, a matching prepared answer is offered as a reply, labelled *From your briefing*.
 - **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 at most). You can switch learning off, see what was learned and delete it. Nothing you say out loud is recorded.
 - **Display and reading options** (all off by default): *Easy reading* (more spacing, larger text, replies of 8 words at most), *One suggestion at a time*, *Hear the suggestions* (in your own headphones only, never into the call), *High contrast* (nothing relies on color alone), *Reduce motion* (the system setting is always followed).
-- **Output:** Meet chat, a synthetic voice in the call, or both. The voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet mutes it too.
+- **Output:** Meet chat, a synthetic voice in the call, or both. The voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet silences it at once. Three English voices to choose from. The quick phrases and the Alt+D line are synthesized in advance, so they are spoken without waiting. A reply the voice cannot speak goes to the chat.
+- **Optional, off by default:** also raise your hand in Meet when you send "I'm still speaking" (extension only).
 
 ## No stealth mode
 
@@ -70,12 +73,15 @@ const deviceModel = getGenerativeModel(ai, {
 const hybridModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_ON_DEVICE, onDeviceParams, inCloudParams });
 // …or force the cloud when Nano is present but failed
 const cloudModel = getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams });
+// Before the call, after an explicit click: a cloud model reads the briefing once
+const prepCloudModel = getGenerativeModel(ai, { mode: InferenceMode.PREFER_IN_CLOUD, onDeviceParams, inCloudParams });
 
 const { stream, response } = await deviceModel.generateContentStream(prompt); // replies appear as they complete
 (await response).inferenceSource; // ON_DEVICE | IN_CLOUD → badge and routing log
 ```
 
-- **Hybrid inference, privacy first:** on device by default. The cloud is used only when the device cannot run Gemini Nano (or Nano fails) *and* the user allowed it. The badge and the *Where suggestions were generated* log read `inferenceSource` for every request, with the reason for the route.
+- **Cloud before the call, device during the call:** *Prepare for the call* is the one job given to the cloud on purpose: reading a long briefing (up to 4,000 words) in one `PREFER_IN_CLOUD` request, after a confirmation that states what is sent. The answers are stored with the briefing on the computer. The same job can run on Gemini Nano instead (`ONLY_ON_DEVICE`, up to 8 parts of 400 words). Every preparation appears in the routing log with the route really taken.
+- **Hybrid inference, privacy first:** during the call, on device by default. The cloud is used only when the device cannot run Gemini Nano (or Nano fails) *and* the user allowed it. The badge and the *Where suggestions were generated* log read `inferenceSource` for every request, with the reason for the route.
 - **What may reach the cloud:**
 
   | Data | On device | Cloud (after consent) |
@@ -85,11 +91,12 @@ const { stream, response } = await deviceModel.generateContentStream(prompt); //
   | Your past replies (style examples) | yes | never |
   | Audio | never | never |
 
-- **Streaming** on both paths with the same JSON schema; one request at a time, the newest question wins (a running Gemini Nano request cannot be cancelled).
+- **Streaming** on both paths with the same JSON schema. One request at a time, the newest question wins, and the request it replaces is really cancelled (`AbortSignal`, [`core/runner.js`](core/runner.js)).
+- **Early start, on device only:** generation starts after a shorter silence (`speculate_ms`, 500 ms by default) and is shown at the normal pause if the captions did not change ([`core/pause.js`](core/pause.js)). It never runs on the cloud route.
 - **Prompt safety:** captions and documents are fenced as data, with length limits, so text in a shared document or a caption is not treated as an instruction.
 - **App Check:** reCAPTCHA Enterprise on the hosted demo, limited-use tokens on every cloud request. In the extension, a debug token entered by the developer and kept only in the extension's own storage (Manifest V3 extensions cannot load reCAPTCHA's remote script). On-device suggestions need no token and no network.
-- **Remote Config:** prompt variant (`prompt_version`: `1` plain, `2` warm, `3` professional), pause length, maximum words, style examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
-- **Not generative AI:** the optional voice is a local speech synthesizer (Piper, running in WebAssembly). No other model API is called.
+- **Remote Config:** prompt variant (`prompt_version`: `1` plain, `2` warm, `3` professional), pause length, early start (`speculate_ms`, 0 turns it off), maximum words, style examples, briefing excerpts, cloud model, and a cloud kill switch ([`remoteconfig.template.json`](remoteconfig.template.json)).
+- **Not generative AI:** the optional voice is a local speech synthesizer (Piper voices on ONNX Runtime, in a worker). No other model API is called.
 
 ## Architecture
 
@@ -106,17 +113,17 @@ Google Meet captions ──▶ content script: overlay, keys, chat output ──
 ```
 
 ```
-core/        engine (Firebase AI Logic), prompt, briefing, memory, text ranking
+core/        engine (Firebase AI Logic), preparation, request runner, prompt, briefing, memory
 shared/      in-call overlay, settings/briefing/memory screens, document reader
-extension/   Manifest V3 extension (content scripts, side panel, voice)
+extension/   Manifest V3 extension (content scripts, side panel, voice worker)
 demo-web/    hosted demo: a simulated call using the same core and overlay
-test/        unit tests (node --test) and end-to-end checks (test/e2e)
+test/        97 unit tests (`npm test`) and end-to-end checks (`node test/e2e/<name>.mjs` after `npm run build`; they need Playwright and Chrome)
 ```
 
 ## Try it
 
 - **Hosted demo:** https://pipe-up-demo.web.app — no account, no token. Its voice is the browser's speech synthesis; the extension uses the local Piper voice.
-- **Extension:** download `pipe-up-extension.zip` from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. For the voice, click *Set up the voice* in the Live tab (one download of about 60 MB from Hugging Face).
+- **Extension:** download `pipe-up-extension.zip` from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. For the voice, pick one in the Live tab and click *Set up the voice* (one download of about 64 MB per voice, from a fixed revision of `rhasspy/piper-voices` on Hugging Face, checked with SHA-256 before use). If you used the voice of version 0.3.1 or earlier, set one up again: that voice was removed.
 
 Without Gemini Nano, the extension offers the quick phrases, your own typed replies and three basic replies. Its cloud path needs an App Check debug token, which is not published: use the hosted demo to try the cloud path.
 
@@ -127,7 +134,7 @@ Without Gemini Nano, the extension offers the quick phrases, your own typed repl
 3. **Flags, if the model is not offered:** set `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` to *Enabled* (Firebase docs, same page). The [hackathon FAQ](https://firebasehybridaihackathon.devpost.com/details/faqs) adds: in `chrome://flags`, search for **"Gemma 4 for Built-in AI"** and enable it. Restart Chrome.
 4. **Check:** in Pipe Up, the *Live* tab shows the status and a *Set up on-device AI* button (one download, several minutes). You can also open `chrome://on-device-internals`, or run `await LanguageModel.availability()` in the DevTools console: it should answer `available`.
 
-**Measured** on a desktop with an RTX 4070 Ti, Chrome 157: the first on-device suggestion appears about 1.2 s after the pause; a cloud call takes about 4 to 7 s.
+**Measured** with version 0.3.1 on a desktop with an RTX 4070 Ti, Chrome 157: the first on-device suggestion appears about 1.2 s after the pause; a cloud call takes about 4 to 7 s. The early start added since then has not been measured on a real Gemini Nano yet.
 
 ## Build it yourself
 
@@ -144,9 +151,9 @@ Pipe Up reads the captions Meet already shows. It never records audio and keeps 
 ## Known limits
 
 - **Pipe Up has not yet been tested with people who stutter.** Its design follows published research, not user testing. Getting that feedback is the first next step.
-- **The voice has not yet been verified in a live Meet call with a second participant.** It is covered by an automated check of the microphone mixer on a test page (`test/e2e/voice-mixer.mjs`).
+- **The voice and the raise-hand option have not yet been verified in a live Meet call with a second participant.** The voice is covered by automated checks: real synthesis (`test/e2e/voice.mjs`) and the microphone mixer on a test page (`test/e2e/voice-mixer.mjs`).
 - Meet's page changes often; captions and chat are found through accessible labels in the main UI languages. If your own captions are not labelled "You", set your display name in *Settings*.
-- English only for now: Pipe Up declares English to Gemini Nano, and the voice is English, with one voice (Piper `en_US-hfc_female-medium`).
+- English only for now: Pipe Up declares English to Gemini Nano, and the three voices are English.
 - The extension and the on-device path need Chrome on desktop.
 
 ## Prior art and how Pipe Up differs
@@ -164,14 +171,13 @@ First commit: November 12, 2026. No pre-existing project code was reused. The co
 
 ## License
 
-Pipe Up's code: [Apache-2.0](LICENSE). The built extension also bundles separately licensed components, including the optional voice module's phonemizer (espeak-ng, GPL-3.0): see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Pipe Up's code: [Apache-2.0](LICENSE). The built extension also bundles separately licensed components, including the optional voice module's phonemizer (espeak-ng, GPL-3.0-or-later). The voices are downloaded on request and are trained on public-domain recordings: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-<!-- TO CONFIRM AFTER MERGE (edit this README in one pass; details in docs/submission/compliance.md)
-1. "Prepare for the call": add to "What it does" and to the Firebase AI Logic section (InferenceMode.PREFER_IN_CLOUD after a one-time confirmation, or Gemini Nano; up to 6 likely questions with short editable answers, stored locally, used on device during the call). Message: "Cloud before the call, device during the call". Add the mode to the code excerpt and to the "What may reach the cloud" table.
-2. Speculative on-device start and real cancellation: replace "a running Gemini Nano request cannot be cancelled" if it is no longer true. Re-measure latency before changing any number.
-3. Voice package: zip size, "quick phrases spoken instantly", choice of 2-3 voices; update "one voice" in Known limits, the 60 MB download line and the voice licence line. Do not state a size or a latency that was not measured.
-4. Remove the "voice not yet verified in a live Meet call" limit only after the live test passed.
-5. Replace "Not yet tested with people who stutter" only with the exact wording in docs/submission/feedback-outreach.md.
-6. Uncomment the screenshots block once docs/img/overlay.png, routing-log.png and briefing.png exist.
-7. Gemini Nano setup: confirm on the measuring machine which flags were enabled and what chrome://on-device-internals reports.
+<!-- STILL TO CONFIRM (details in docs/submission/compliance.md)
+1. Live Meet call with a second participant: captions, chat, voice, raise hand. Then remove the matching "Known limits" line.
+2. Feedback from adults who stutter: replace the first "Known limits" line only with the wording in docs/submission/feedback-outreach.md.
+3. Screenshots: uncomment the block at the top once docs/img/overlay.png, routing-log.png and briefing.png exist.
+4. Latency: re-measure on a real Gemini Nano before changing or adding any number.
+5. Gemini Nano setup: confirm on the measuring machine which flags were enabled and what chrome://on-device-internals reports.
+6. Hosted demo redeployed with this version (step "2. Prepare the answers" must be live before judges read the first block).
 -->
