@@ -45,7 +45,7 @@ const ACTION_LABEL = { picked: 'Picked a suggestion', edited: 'Edited a suggesti
  * @param {{get:()=>Promise<object>, set:(b:object, info?:{byUser:boolean})=>Promise<void>}} o.briefing
  * @param {(b:object)=>void} o.onBriefing  called with the new briefing index
  * @param {{get:()=>string, set:(v:string)=>void}} [o.debugToken] extension only
- * @param {{list:{id:string,label:string,mb:number}[], status:()=>Promise<{state:string,voice:string,downloaded:string[]}>, choose:(id:string,p?:(v:number)=>void)=>Promise<void>, test:()=>Promise<void>}} [o.voice] extension only
+ * @param {{list:{id:string,label:string,mb:number}[], status:()=>Promise<{state:string,problem:string,voice:string,available:string[]}>, choose:(id:string,p?:(v:number)=>void)=>Promise<void>, test:()=>Promise<void>}} [o.voice] extension only
  * @param {(on:boolean) => void} [o.onSimulate] hosted demo: the "simulate" switch changed
  * @param {boolean} [o.demo] hosted demo: "simulate no Gemini Nano" switch, no Meet connection
  */
@@ -120,7 +120,7 @@ export function mountControls(root, o) {
   // Declared before put(panes.Live, ...), which calls voiceSection().
   const voiceStatus = h('p', { role: 'status' }, 'Checking the voice…');
   const voiceProgress = h('progress', { max: 1, value: 0, hidden: true, 'aria-label': 'Voice download progress' });
-  const voicePick = h('select', { onchange: pickVoice }, ...(o.voice?.list || []).map((v) => h('option', { value: v.id }, `${v.label} (${v.mb} MB)`)));
+  const voicePick = h('select', { onchange: pickVoice }, ...(o.voice?.list || []).map((v) => h('option', { value: v.id }, v.included ? `${v.label} (included)` : `${v.label} (${v.mb} MB)`)));
   const voiceSetup = h('button', { class: 'primary', hidden: true, onclick: () => useVoice(voicePick.value) });
   const voiceTest = h('button', { hidden: true, onclick: () => o.voice.test().catch((e) => (voiceStatus.textContent = 'Voice error: ' + e.message)) }, 'Test the voice');
   put(panes.Live, 
@@ -162,7 +162,7 @@ export function mountControls(root, o) {
       { class: 'field' },
       h('h2', {}, 'Computer voice in the call'),
       h('p', { class: 'muted' }, 'Optional. A synthetic voice, generated on this computer, reads your chosen reply aloud in the call (choose "Chat + synthetic voice" or "Synthetic voice only" in the call panel). Others hear a computer voice, not yours: you can tell them first: write your own line in Settings, under "Tell others" (Alt+D). Your text never leaves this computer.'),
-      h('label', { class: 'field' }, 'Voice', h('span', { class: 'muted' }, 'Each voice is downloaded once, when you first choose it.'), voicePick),
+      h('label', { class: 'field' }, 'Voice', h('span', { class: 'muted' }, 'One voice is included. The two others are optional downloads of about 64 MB each.'), voicePick),
       voiceStatus,
       voiceProgress,
       h('div', { class: 'row' }, voiceSetup, voiceTest)
@@ -172,7 +172,7 @@ export function mountControls(root, o) {
   let voicePicked = false; // the list shows the user's pick, not yet the voice in use
   async function refreshVoice() {
     if (!o.voice || voiceBusy) return;
-    const { state, voice } = await o.voice.status();
+    const { state, problem, voice, available } = await o.voice.status();
     if (voiceBusy) return;
     if (!voicePicked) voicePick.value = voice;
     const pick = o.voice.list.find((v) => v.id === voicePick.value);
@@ -180,10 +180,9 @@ export function mountControls(root, o) {
     const other = state === 'ready' && pick.id !== voice;
     voiceStatus.textContent = other
       ? 'This voice is not on this computer yet. Your current voice stays in use until it is downloaded.'
-      : { ready: 'The voice is ready.', loading: 'Starting the voice…', missing: 'The voice is not set up.', failed: 'The voice could not start. Try again.' }[state] || state;
-    voiceSetup.hidden = !(other || state === 'missing' || state === 'failed');
-    voiceSetup.textContent =
-      state === 'failed' ? 'Try again' : other ? `Download this voice (${pick.mb} MB, once)` : `Set up the voice (${pick.mb} MB, once)`;
+      : { ready: 'The voice is ready.', loading: 'Starting the voice…', failed: 'The voice could not start. ' + (problem || 'Try again.') }[state] || state;
+    voiceSetup.hidden = !(other || state === 'failed');
+    voiceSetup.textContent = available.includes(pick.id) ? 'Try again' : `Download this voice (${pick.mb} MB, once)`;
     voiceTest.hidden = state !== 'ready' || other;
     voicePick.disabled = state === 'loading';
   }
@@ -191,8 +190,8 @@ export function mountControls(root, o) {
   // downloaded only when the user asks for it with the button.
   async function pickVoice() {
     voicePicked = true;
-    const { state, voice, downloaded } = await o.voice.status();
-    if (state === 'ready' && voicePick.value !== voice && downloaded.includes(voicePick.value)) return useVoice(voicePick.value);
+    const { state, voice, available } = await o.voice.status();
+    if (state === 'ready' && voicePick.value !== voice && available.includes(voicePick.value)) return useVoice(voicePick.value);
     refreshVoice();
   }
   async function useVoice(id) {

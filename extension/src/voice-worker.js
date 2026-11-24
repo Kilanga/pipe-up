@@ -4,8 +4,9 @@
 //
 // Licensing: ONNX Runtime is MIT; the phonemizer (piper-phonemize with
 // espeak-ng data) is GPL-3.0 and ships as separate files in the extension's
-// voice/ folder, with its license. Voice models are not part of the
-// extension: see voices.js and THIRD_PARTY_NOTICES.md.
+// voice/ folder, with its license. The default voice model is in
+// voice/models/; the others are downloaded on request: see voices.js and
+// THIRD_PARTY_NOTICES.md.
 import * as ort from 'onnxruntime-web/wasm';
 import createPiperPhonemize from '@diffusionstudio/piper-wasm/build/piper_phonemize.js';
 import { polish, splitText, toPcm16Base64 } from './voice-audio.js';
@@ -25,7 +26,7 @@ let voice = null; // { id, config, session }: the voice in use
 let speaking = Promise.resolve();
 let loading = Promise.resolve();
 
-// ---------- Voice files (downloaded once, kept in this extension's storage) ----------
+// ---------- Voice files (included, or downloaded once and kept in this extension's storage) ----------
 const folder = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('piper', { create: true });
 
 async function read(dir, name) {
@@ -82,18 +83,35 @@ async function sha256(buffer) {
   return [...hash].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * Makes `v` the voice in use, downloading it first if needed. If anything
- * fails, the voice that was in use stays in use.
- *
- * Only the exact files whose license was checked are accepted: their
- * SHA-256 is verified after the download, before anything is stored, and
- * again each time the stored files are loaded.
- */
-async function load(v, onProgress) {
-  if (voice?.id === v.id) return;
+const right = async (v, model, config) => (await sha256(model)) === v.sha256 && (await sha256(config)) === v.configSha256;
+
+// The included voice is read from the extension's own files, where it stays:
+// no copy is made. It is checked like a download, so a damaged or replaced
+// file is never used.
+async function included(v, names) {
+  const get = (name) =>
+    fetch(file('models/' + name)).then(
+      (res) => (res.ok ? res.arrayBuffer() : null),
+      () => null // not in the extension
+    );
+  const model = await get(names.model);
+  const config = await get(names.config);
+  if (!model || !config || !(await right(v, model, config))) {
+    throw new Error('The included voice is missing or damaged. Install Pipe Up again, or choose another voice.');
+  }
+  // Version 0.4.0 downloaded this voice: that copy is no longer needed.
+  try {
+    const dir = await folder();
+    await remove(dir, names.model);
+    await remove(dir, names.config);
+  } catch {
+    // storage not available: nothing was stored
+  }
+  return { model, config };
+}
+
+async function downloaded(v, names, onProgress) {
   const dir = await folder();
-  const names = { model: v.id + '.onnx', config: v.id + '.onnx.json' };
   let model = await read(dir, names.model);
   let config = await read(dir, names.config);
   const stored = Boolean(model && config);
@@ -101,7 +119,7 @@ async function load(v, onProgress) {
     config = await download(v.url + '.json');
     model = await download(v.url, v.bytes, onProgress);
   }
-  if ((await sha256(model)) !== v.sha256 || (await sha256(config)) !== v.configSha256) {
+  if (!(await right(v, model, config))) {
     // Remove what was stored, so that "Try again" downloads fresh files.
     await remove(dir, names.model);
     await remove(dir, names.config);
@@ -111,6 +129,21 @@ async function load(v, onProgress) {
     await write(dir, names.config, config);
     await write(dir, names.model, model);
   }
+  return { model, config };
+}
+
+/**
+ * Makes `v` the voice in use, downloading it first if needed. If anything
+ * fails, the voice that was in use stays in use.
+ *
+ * Only the exact files whose license was checked are accepted: their
+ * SHA-256 is verified after the download, before anything is stored, and
+ * again each time the files are loaded, from the extension or from storage.
+ */
+async function load(v, onProgress) {
+  if (voice?.id === v.id) return;
+  const names = { model: v.id + '.onnx', config: v.id + '.onnx.json' };
+  const { model, config } = v.included ? await included(v, names) : await downloaded(v, names, onProgress);
   const next = {
     id: v.id,
     config: JSON.parse(new TextDecoder().decode(config)),

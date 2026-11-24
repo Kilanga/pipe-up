@@ -10,7 +10,7 @@ import { mountControls } from '../../shared/controls.js';
 import { setPdfWorker } from '../../shared/extract.js';
 import { speakPrivately } from '../../shared/private-speech.js';
 import { VOICES, DEFAULT_VOICE } from './voices.js';
-import { currentVoice, downloadedVoices, keepReady, prepare, removeOldVoices, synthesize, unprepare, useVoice } from './voice.js';
+import { availableVoices, currentVoice, keepReady, prepare, removeOldVoices, synthesize, unprepare, useVoice } from './voice.js';
 
 /* global __FIREBASE_CONFIG__ */
 const firebaseConfig = __FIREBASE_CONFIG__;
@@ -26,7 +26,7 @@ let enginePromise = null;
 // Local voice: 'ready' once a voice is loaded and can speak.
 let voiceReady = false;
 let voiceFailed = false;
-let voiceStarting = false;
+let voiceProblem = ''; // why it failed, in words for the user
 
 // The App Check debug token lives only in this extension page's own storage:
 // content scripts on meet.google.com cannot read it.
@@ -75,17 +75,15 @@ const controls = mountControls(document.getElementById('app'), {
   briefing: briefingStore,
   onBriefing: (idx) => (briefingIndex = idx),
   voice: {
-    list: VOICES.map((v) => ({ id: v.id, label: v.label, mb: Math.round(v.bytes / 1e6) })),
-    status: async () => {
-      const downloaded = await downloadedVoices();
-      return {
-        // A downloaded voice that is not ready yet is starting.
-        state: voiceReady ? 'ready' : voiceFailed ? 'failed' : voiceStarting || downloaded.length ? 'loading' : 'missing',
-        // The voice in use, or the one that "Set up the voice" will download.
-        voice: currentVoice() || (VOICES.some((v) => v.id === settings.voice) ? settings.voice : DEFAULT_VOICE),
-        downloaded,
-      };
-    },
+    list: VOICES.map((v) => ({ id: v.id, label: v.label, mb: Math.round(v.bytes / 1e6), included: Boolean(v.included) })),
+    status: async () => ({
+      // One voice is included, so a voice that is not ready yet is starting.
+      state: voiceReady ? 'ready' : voiceFailed ? 'failed' : 'loading',
+      problem: voiceProblem,
+      // The voice in use, or the one that will start.
+      voice: currentVoice() || (VOICES.some((v) => v.id === settings.voice) ? settings.voice : DEFAULT_VOICE),
+      available: await availableVoices(),
+    }),
     choose: chooseVoice,
     test: async () => {
       const { pcm16, rate } = await synthesize('Hi, this is the Pipe Up computer voice.');
@@ -149,26 +147,26 @@ function setVoiceReady(on) {
  */
 async function chooseVoice(id, onProgress) {
   voiceFailed = false;
-  voiceStarting = true;
+  voiceProblem = '';
   try {
     await useVoice(id, onProgress);
   } catch (e) {
-    if (!voiceReady) voiceFailed = true;
+    if (!voiceReady) {
+      voiceFailed = true;
+      voiceProblem = String(e?.message || e);
+    }
     throw e;
-  } finally {
-    voiceStarting = false;
   }
   if (settings.voice !== id) await settingsStore.set({ voice: id });
   setVoiceReady(true);
   keepPhrasesReady();
 }
 
-// At start: the saved voice if it was downloaded before, otherwise another
-// downloaded one.
+// At start: the saved voice if it is on this computer, otherwise the included
+// one or another downloaded one. Nothing is downloaded here.
 async function startSavedVoice() {
   await removeOldVoices();
-  const have = await downloadedVoices();
-  if (have.length) controls.refreshVoice();
+  const have = await availableVoices();
   for (const id of [settings.voice, ...have].filter((id, i, all) => have.includes(id) && all.indexOf(id) === i)) {
     try {
       return await chooseVoice(id);
@@ -178,9 +176,11 @@ async function startSavedVoice() {
   }
   // Meet tabs must not expect a voice that is not there.
   chrome.storage.local.set({ voiceInstalled: false });
-  // Coming from 0.3.1 (whose voices are gone) with "voice" still chosen:
-  // back to "Chat only", or every send would say the voice is not set up.
-  if (voiceOutputWithoutVoice(settings, have)) await settingsStore.set({ outputMode: 'chat' });
+  // The included voice cannot be used and no other voice is on this computer,
+  // with "voice" still chosen: back to "Chat only", or every send would say
+  // the voice is not ready.
+  const downloaded = have.filter((id) => !VOICES.find((v) => v.id === id).included);
+  if (voiceOutputWithoutVoice(settings, downloaded)) await settingsStore.set({ outputMode: 'chat' });
   controls.refreshVoice();
 }
 

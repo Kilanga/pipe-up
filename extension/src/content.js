@@ -134,7 +134,7 @@ async function deliver(text) {
   if (!r.ok) {
     overlay.notice(r.copied ? 'Could not post in the chat: your reply is in the clipboard.' : 'Could not post in the chat. Please type it there.');
   } else if (wantsVoice && !canSpeak) {
-    overlay.notice(port ? 'The voice is not set up yet (side panel, Live tab): your reply went to the chat.' : 'The Pipe Up side panel is closed, so the voice cannot speak: your reply went to the chat.');
+    overlay.notice(port ? 'The voice is not ready (side panel, Live tab): your reply went to the chat.' : 'The Pipe Up side panel is closed, so the voice cannot speak: your reply went to the chat.');
   }
 }
 

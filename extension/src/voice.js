@@ -1,5 +1,5 @@
 // The side panel's access to the local voice. The voice itself runs in a
-// worker (voice-worker.js), started only when a voice is set up. This file
+// worker (voice-worker.js). This file
 // starts it, keeps the phrases the user is most likely to say ready in
 // advance, and puts a reply the user is waiting for ahead of that
 // preparation.
@@ -47,7 +47,7 @@ function stopWorker(why) {
 async function load(id, onProgress) {
   const v = VOICES.find((x) => x.id === id);
   if (!v) throw new Error('Unknown voice: ' + id);
-  await ask({ op: 'load', voice: { id, url: voiceUrl(id), bytes: v.bytes, sha256: v.sha256, configSha256: v.configSha256 } }, onProgress);
+  await ask({ op: 'load', voice: { ...v, url: voiceUrl(id) } }, onProgress);
   loaded = id;
 }
 
@@ -59,15 +59,15 @@ export const currentVoice = () => current;
 const storage = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('piper', { create: true });
 const filesOf = (id) => [id + '.onnx', id + '.onnx.json'];
 
-/** Ids of the voices already downloaded to this computer. */
-export async function downloadedVoices() {
+/** Ids of the voices on this computer: the included one and those already downloaded. */
+export async function availableVoices() {
+  const names = [];
   try {
-    const names = [];
     for await (const name of (await storage()).keys()) names.push(name);
-    return VOICES.filter((v) => filesOf(v.id).every((f) => names.includes(f))).map((v) => v.id);
   } catch {
-    return []; // storage not available: nothing downloaded
+    // storage not available: nothing downloaded
   }
+  return VOICES.filter((v) => v.included || filesOf(v.id).every((f) => names.includes(f))).map((v) => v.id);
 }
 
 /** Frees the space taken by voices that an older version offered. */
@@ -82,8 +82,9 @@ export async function removeOldVoices() {
 }
 
 /**
- * Makes a voice the one in use; downloads it first if needed (about 64 MB,
- * `onProgress` gets 0…1). If this fails, the voice in use before stays.
+ * Makes a voice the one in use; downloads it first if it is not on this
+ * computer (about 64 MB, `onProgress` gets 0…1). If this fails, the voice in
+ * use before stays.
  */
 export async function useVoice(id, onProgress) {
   await load(id, onProgress);

@@ -54,7 +54,7 @@ await panel.goto(`chrome-extension://${id}/sidepanel.html`); await panel.waitFor
 const meet = await ctx.newPage(); meet.on('pageerror', e => errs.push('meet ' + e.message));
 const iso = await isolatedWorld(meet);
 await meet.goto('https://meet.google.com/abc-defg-hij'); await meet.bringToFront(); await meet.waitForTimeout(2500);
-ok('voice flag off', (await meet.evaluate(() => document.documentElement.dataset.pipeUpVoice)) === 'off');
+ok('voice flag on: a voice is included', (await meet.evaluate(() => document.documentElement.dataset.pipeUpVoice)) === 'on');
 const ov = () => iso(`(r) => ({ cards: r.querySelectorAll('.card').length, sel: [...r.querySelectorAll('.card')].findIndex((c) => c.classList.contains('sel')), badge: r.querySelector('.badge').textContent, cls: r.querySelector('.pu').className, notice: r.querySelector('.notice')?.textContent, typed: r.querySelector('.typed').value })`);
 const qa = () => meet.evaluate(() => [...document.querySelectorAll('#qamsgs li')].map(l => l.textContent));
 const msgs = () => meet.evaluate(() => [...document.querySelectorAll('#msgs li')].map(l => l.textContent));
