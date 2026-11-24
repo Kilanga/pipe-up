@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.cache/
 config/firebase.local.json
 config/*.local.*
 .firebase/

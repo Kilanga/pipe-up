@@ -9,8 +9,8 @@ each script.
 
 ## Optional local voice (`voice-worker.js` and `voice/` in the built extension)
 
-Used only when the user sets up the "Computer voice in the call". It runs entirely on the
-user's computer.
+The "Computer voice in the call". It speaks only when the user chooses a voice
+output, and it runs entirely on the user's computer.
 
 | Component | In the extension | Version | License | Source |
 | --- | --- | --- | --- | --- |
@@ -53,27 +53,55 @@ Gujarati, Tamil, Telugu, Kannada, Malayalam, Sinhala, Georgian and Korean
 script), removes the other 99 dictionaries, and changes nothing inside the files
 it keeps. So this data file is a modified version of the original: modified by
 Pipe Up's build, by removing dictionaries only, each time the extension is
-built (version 0.4.0: November 2026). The script that does this is
+built (version 0.4.1: November 2026). The script that does this is
 `scripts/phonemizer-data.mjs` in Pipe Up's source code:
 https://github.com/Kilanga/pipe-up.
 
 The phonemizer is a separate program: the extension starts it with a text and
 reads the phonemes it prints.
 
-## Voices (downloaded on request, not part of the extension)
+## Voices (one distributed in the extension, two downloaded on request)
 
-A voice is downloaded only when the user clicks "Set up the voice" or "Download
-this voice". Every file comes from the Hugging Face repository
+Every voice file comes from the Hugging Face repository
 https://huggingface.co/rhasspy/piper-voices (repository license: MIT), at the
 fixed revision `375a0fe641dea077c2a47b4e9a056d6da521eed3` (tag `v1.0.0`), and
 is accepted only if its SHA-256 is the one listed in `extension/src/voices.js`.
+
+### The included voice
+
+Since version 0.4.1 the default voice, `en_US-ljspeech-medium` ("Female voice"
+in the side panel), is distributed inside the extension zip. The build
+downloads its two files from that revision, checks them, and copies them
+unchanged (`scripts/voice-files.mjs`); the extension checks them again each
+time it loads them.
+
+| In the extension | From (`<path>` below) | SHA-256 |
+| --- | --- | --- |
+| `voice/models/en_US-ljspeech-medium.onnx` (63,531,379 bytes) | `en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx` | `6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22` |
+| `voice/models/en_US-ljspeech-medium.onnx.json` | `en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json` | `141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860` |
+| `voice/licenses/MODEL_CARD-en_US-ljspeech-medium.md` | `en/en_US/ljspeech/medium/MODEL_CARD` | `fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d` |
+
+License, as stated in its `MODEL_CARD` at that revision (the whole card is in
+the zip, see the table). Under "Dataset": "URL:
+https://keithito.com/LJ-Speech-Dataset/" and "License: public domain". Under
+"Training": "Trained from scratch for 1000 epochs on medium quality settings
+using the LJ Speech dataset." The card names no restriction. The page it gives
+for the training, https://brycebeattie.com/files/tts/, also lists this voice as
+public domain (read in November 2026), and the repository that publishes the
+file declares the MIT license in its `README.md` (`license: mit`; it has no
+separate license file).
+
+### All three voices
+
+The two other voices are downloaded only when the user clicks "Download this
+voice".
 
 Download address of a file:
 `https://huggingface.co/rhasspy/piper-voices/resolve/375a0fe641dea077c2a47b4e9a056d6da521eed3/<path>`
 
 | Voice in the side panel | Files (`<path>`, plus the same with `.json`) | Recordings and their license, from the voice's `MODEL_CARD` at that revision | SHA-256 of the `.onnx` file |
 | --- | --- | --- | --- |
-| Female voice (default) | `en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx` | LJ Speech (https://keithito.com/LJ-Speech-Dataset/), **public domain**; trained from scratch | `6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22` |
+| Female voice (default, included) | `en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx` | LJ Speech (https://keithito.com/LJ-Speech-Dataset/), **public domain**; trained from scratch | `6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22` |
 | Female voice, lower | `en/en_US/kristin/medium/en_US-kristin-medium.onnx` | LibriVox recordings (https://librivox.org), **public domain**; trained from scratch | `5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4` |
 | Male voice | `en/en_US/john/medium/en_US-john-medium.onnx` | LibriVox recordings (https://librivox.org), **public domain**; fine-tuned from the kristin voice above | `789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988` |
 

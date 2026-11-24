@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pipe Up",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A backup channel for people who stutter in Google Meet: short reply suggestions and quick phrases, on your device by default.",
   "minimum_chrome_version": "139",
   "icons": {

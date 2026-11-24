@@ -31,11 +31,11 @@ const id = new URL(sw.url()).host;
 const errs = []; const R = []; const ok = (n, c, x = '') => R.push(`${c ? 'OK  ' : 'FAIL'} ${n} ${x}`);
 const settings = (patch) => panel.evaluate(async (patch) => { const { settings } = await chrome.storage.local.get('settings'); if (patch) await chrome.storage.local.set({ settings: { ...settings, ...patch } }); return { ...settings, ...patch }; }, patch);
 
-// ---- The side panel: the debug token is not printed; a voice setting without a voice is repaired ----
+// ---- The side panel: the debug token is not printed; a voice setting from an older version is kept ----
 let panel = await ctx.newPage(); const cons = [];
 panel.on('pageerror', (e) => errs.push('panel ' + e.message)); panel.on('console', (m) => cons.push(m.text()));
 await panel.goto(`chrome-extension://${id}/sidepanel.html`); await panel.waitForTimeout(1500);
-// as after an update from 0.3.1: "voice" still chosen, its voice files gone
+// as after an update from 0.3.1: "voice" still chosen, its voice files gone; a voice is now included
 await panel.evaluate((t) => localStorage.setItem('pu-appcheck-debug-token', t), TOKEN);
 await settings({ outputMode: 'chat+voice' });
 await panel.reload(); await panel.waitForTimeout(3000);
@@ -43,7 +43,7 @@ await panel.evaluate(() => console.log('an ordinary log line'));
 await panel.waitForTimeout(200);
 ok('debug token: the SDK line that prints it is not shown in the side panel console', !cons.some((c) => c.includes(TOKEN) || /App Check debug token/i.test(c)), cons.filter((c) => /debug token/i.test(c)).join(' | ').replaceAll(TOKEN, '<token>').slice(0, 120));
 ok('debug token: console.log is put back, other lines are printed', cons.includes('an ordinary log line'));
-ok('update from 0.3.1: no voice on this computer, so "Chat + voice" goes back to "Chat only"', (await settings()).outputMode === 'chat', (await settings()).outputMode);
+ok('update from 0.3.1: the included voice starts, so "Chat + voice" stays chosen', (await settings()).outputMode === 'chat+voice' && (await panel.evaluate(async () => (await chrome.storage.local.get('voiceInstalled')).voiceInstalled)) === true, (await settings()).outputMode);
 await panel.evaluate(() => localStorage.removeItem('pu-appcheck-debug-token'));
 
 // ---- The field where a reply is edited ----

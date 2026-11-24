@@ -134,7 +134,7 @@ async function deliver(text) {
   if (!r.ok) {
     overlay.notice(r.copied ? 'Could not post in the chat: your reply is in the clipboard.' : 'Could not post in the chat. Please type it there.');
   } else if (wantsVoice && !canSpeak) {
-    overlay.notice(port ? 'The voice is not set up yet (side panel, Live tab): your reply went to the chat.' : 'The Pipe Up side panel is closed, so the voice cannot speak: your reply went to the chat.');
+    overlay.notice(port ? 'The voice is not ready (side panel, Live tab): your reply went to the chat.' : 'The Pipe Up side panel is closed, so the voice cannot speak: your reply went to the chat.');
   }
 }
 
@@ -159,7 +159,7 @@ window.postMessage({ type: 'pipe-up:port' }, location.origin, [pagePort]);
 const VOICE_PROBLEMS = {
   muted: 'You are muted in Meet: unmute so others can hear the voice.',
   'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
-  reload: 'The voice was set up after you joined: reload this Meet tab to use it.',
+  reload: 'The voice was chosen after you joined: reload this Meet tab to use it.',
   'no-mic': 'Join the call with your microphone on, then the voice can read your reply in the call.',
   'bad-audio': 'The voice could not read this reply.',
 };
