@@ -125,7 +125,7 @@ Without Gemini Nano, the extension offers the quick phrases, your own typed repl
 3. **Flags, if the model is not offered:** set `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` to *Enabled* (Firebase docs, same page). The [hackathon FAQ](https://firebasehybridaihackathon.devpost.com/details/faqs) adds: in `chrome://flags`, search for **"Gemma 4 for Built-in AI"** and enable it. Restart Chrome.
 4. **Check:** in Pipe Up, the *Live* tab shows the status and a *Set up on-device AI* button (one download, several minutes). You can also open `chrome://on-device-internals`, or run `await LanguageModel.availability()` in the DevTools console: it should answer `available`.
 
-**Measured** with version 0.3.1 on a desktop with an RTX 4070 Ti, Chrome 157: the first on-device suggestion appears about 1.2 s after the pause; a cloud call takes about 4 to 7 s. The early start added since then has not been measured on a real Gemini Nano yet.
+**Measured** with version 0.4.1 on the hosted demo, on a desktop with an RTX 4070 Ti and Chrome 157 (one run each, November 24, 2026): the first on-device suggestion appeared about 0.5 s after the pause, generation having started about 0.7 s before it; *Prepare on this computer* took 3.9 s for the 98-word sample briefing; *Prepare with the cloud* took 11 s, including loading reCAPTCHA for the first time; a cloud reply during the call took 1.5 s. With version 0.3.1, before the early start, the first on-device suggestion appeared about 1.2 s after the pause.
 
 ## Build it yourself
 
