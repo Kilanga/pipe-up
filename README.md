@@ -160,7 +160,7 @@ Pipe Up differs on four points. It is a backup for people who speak for themselv
 
 ## Built during #BuildHybridAI 2026
 
-First commit: November 12, 2026. No pre-existing project code was reused. The code was written with the help of an AI coding assistant (Claude). Release notes for each version are in [`docs/releases`](docs/releases); the submission documents are in [`docs/submission`](docs/submission).
+First commit: November 12, 2026. No pre-existing project code was reused. The code was written with the help of an AI coding assistant (Claude). Release notes for each version are in [`docs/releases`](docs/releases).
 
 ## License
 
