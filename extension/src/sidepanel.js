@@ -135,7 +135,8 @@ chrome.storage.onChanged.addListener((changes) => {
 // ---------- Local voice ----------
 function setVoiceReady(on) {
   voiceReady = on;
-  // Tells Meet tabs opened from now on to mix the voice into the microphone.
+  // For Meet tabs: with a voice output chosen, they mix the voice into the
+  // microphone they ask for from now on (voice-flag.js).
   chrome.storage.local.set({ voiceInstalled: on });
   if (port) safePost(port, { type: 'voice', ready: on });
   controls.refreshVoice();

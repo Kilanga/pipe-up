@@ -97,7 +97,6 @@ ctx.on('request', (q) => /^https?:/.test(q.url()) && /\.(m?js|wasm)(\?|$)/.test(
 const sha = (name) => createHash('sha256').update(readFileSync(EXT + '/' + MODELS + name)).digest('hex');
 ok('the built extension holds the included voice, with the expected SHA-256', sha(FEMALE.id + '.onnx') === FEMALE.sha256 && sha(FEMALE.id + '.onnx.json') === FEMALE.configSha256);
 ok('its model card is in the license folder', /License: public domain/.test(readFileSync(EXT + '/voice/licenses/MODEL_CARD-' + FEMALE.id + '.md', 'utf8')));
-ok('Meet tabs are told about the voice from install', (await sw.evaluate(async () => (await chrome.storage.local.get('voiceInstalled')).voiceInstalled)) === true);
 const opened = Date.now();
 await openPanel(0);
 const section = () => panel.locator('#pu-pane-Live .field', { has: panel.locator('h2', { hasText: 'Computer voice in the call' }) }).first();
@@ -116,17 +115,36 @@ ok('the included voice is the one in use', (await section().locator('select').in
 ok('no button to set up or download', (await section().getByRole('button').allInnerTexts()).join() === 'Test the voice', (await section().getByRole('button').allInnerTexts()).join());
 ok('nothing was asked from Hugging Face', downloads.length === 0, downloads.join(' '));
 ok('no copy of the voice in the extension\'s storage', (await stored()).length === 0, JSON.stringify(await stored()));
-ok('Meet is told a voice exists', (await flag()) === true);
+ok('a voice is known to be ready', (await flag()) === true);
 ok('the output stays "Chat only" until the user chooses the voice', (await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings.outputMode)) === 'chat');
 await button('Test the voice').click(); await panel.waitForTimeout(2500);
 ok('"Test the voice" plays without an error', /The voice is ready/.test(await status()), await status());
 
 // ---------- Speaking into the call ----------
 const meet = await ctx.newPage(); meet.on('pageerror', (e) => errs.push('meet ' + e.message));
+// The panel in Meet is in a closed shadow root: its notice is read from the
+// content script's isolated world (found over CDP), as in extension.mjs.
+const cdp = await ctx.newCDPSession(meet); let world = null;
+cdp.on('Runtime.executionContextCreated', ({ context: c }) => { if (c.auxData?.type === 'isolated' && c.origin.startsWith('chrome-extension://')) world = c.id; });
+await cdp.send('Runtime.enable');
+const notice = async () => (await cdp.send('Runtime.evaluate', { contextId: world, returnByValue: true, expression: `chrome.dom.openOrClosedShadowRoot(document.getElementById('pipe-up-overlay')).querySelector('.notice')?.textContent || ''` })).result.value;
+const voiceFlag = () => meet.evaluate(() => document.documentElement.dataset.pipeUpVoice);
+// What Meet got from getUserMedia: the browser's own track, or Pipe Up's mixed one (which carries its own "enabled", "label"… and "stop").
+const track = () => meet.evaluate(() => { const t = mic.getAudioTracks()[0]; return { label: t.label, own: Object.getOwnPropertyNames(t).sort().join(), nativeStop: /\[native code\]/.test(Function.prototype.toString.call(t.stop)) }; });
 await meet.goto('https://meet.google.com/abc-defg-hij'); await meet.bringToFront(); await meet.waitForTimeout(2500);
-ok('voice flag on for new Meet tabs', (await meet.evaluate(() => document.documentElement.dataset.pipeUpVoice)) === 'on');
+// A new install stays on "Chat only": Meet's microphone is not touched.
+const plain = await track();
+ok('"Chat only": the voice flag is off although a voice is ready', (await voiceFlag()) === 'off' && (await flag()) === true);
+ok('"Chat only": Meet gets the plain microphone track, untouched (no mixer)', /fake/i.test(plain.label) && plain.own === '' && plain.nativeStop, JSON.stringify(plain));
+// The voice is chosen during the call: the user is told to reload, and the reply is not lost.
 await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); await chrome.storage.local.set({ settings: { ...settings, outputMode: 'voice' } }); });
 await meet.waitForTimeout(6000); // time to prepare the quick phrases
+ok('voice chosen: the flag follows, for microphones asked from now on', (await voiceFlag()) === 'on' && (await track()).own === '');
+await meet.keyboard.press('Alt+1'); await meet.waitForTimeout(1500);
+ok('voice chosen after joining: "reload this Meet tab", and the reply goes to the chat', /The voice was chosen after you joined: reload this Meet tab to use it\./.test(await notice()) && (await meet.evaluate(() => document.querySelectorAll('#msgs li').length)) === 1, await notice());
+await meet.reload(); await meet.bringToFront(); await meet.waitForTimeout(4000);
+const mixed = await track();
+ok('after the reload: Meet gets the mixed track, with the real microphone\'s label', (await voiceFlag()) === 'on' && mixed.label === plain.label && /enabled/.test(mixed.own) && !mixed.nativeStop, JSON.stringify(mixed));
 
 // Uses a shortcut and reports what the call received, and how long it took.
 async function speak(press) {

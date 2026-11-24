@@ -161,7 +161,7 @@ export function mountControls(root, o) {
       'div',
       { class: 'field' },
       h('h2', {}, 'Computer voice in the call'),
-      h('p', { class: 'muted' }, 'Optional. A synthetic voice, generated on this computer, reads your chosen reply aloud in the call (choose "Chat + synthetic voice" or "Synthetic voice only" in the call panel). Others hear a computer voice, not yours: you can tell them first: write your own line in Settings, under "Tell others" (Alt+D). Your text never leaves this computer.'),
+      h('p', { class: 'muted' }, 'Optional. A synthetic voice, generated on this computer, reads your chosen reply aloud in the call (choose "Chat + synthetic voice" or "Synthetic voice only" in the call panel). The voice is used from your next call, or after you reload the Meet tab. Others hear a computer voice, not yours: you can tell them first: write your own line in Settings, under "Tell others" (Alt+D). Your text never leaves this computer.'),
       h('label', { class: 'field' }, 'Voice', h('span', { class: 'muted' }, 'One voice is included. The two others are optional downloads of about 64 MB each.'), voicePick),
       voiceStatus,
       voiceProgress,

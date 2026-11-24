@@ -159,7 +159,7 @@ window.postMessage({ type: 'pipe-up:port' }, location.origin, [pagePort]);
 const VOICE_PROBLEMS = {
   muted: 'You are muted in Meet: unmute so others can hear the voice.',
   'needs-click': 'Click once in the Meet window so the browser allows sound, then try again.',
-  reload: 'The voice was set up after you joined: reload this Meet tab to use it.',
+  reload: 'The voice was chosen after you joined: reload this Meet tab to use it.',
   'no-mic': 'Join the call with your microphone on, then the voice can read your reply in the call.',
   'bad-audio': 'The voice could not read this reply.',
 };

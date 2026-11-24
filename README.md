@@ -108,13 +108,13 @@ core/        engine (Firebase AI Logic), preparation, request runner, prompt, br
 shared/      in-call overlay, settings/briefing/memory screens, document reader
 extension/   Manifest V3 extension (content scripts, side panel, voice worker)
 demo-web/    hosted demo: a simulated call using the same core and overlay
-test/        135 unit tests (`npm test`) and 8 end-to-end scripts with 303 checks: demo, extension, security, interface, network, voice-mixer, autoplay, voice (`node test/e2e/<name>.mjs` after `npm run build`; they need Playwright and Chrome)
+test/        135 unit tests (`npm test`) and 8 end-to-end scripts with 306 checks: demo, extension, security, interface, network, voice-mixer, autoplay, voice (`node test/e2e/<name>.mjs` after `npm run build`; they need Playwright and Chrome)
 ```
 
 ## Try it
 
 - **Hosted demo:** https://pipe-up-demo.web.app — no account, no token. Its voice is the browser's speech synthesis; the extension uses the local Piper voice.
-- **Extension:** download `pipe-up-extension.zip` (about 64 MB, most of it the included voice) from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. The voice works right after install, with nothing to download: one voice is included, and it is used once you choose a voice output in the call panel. The two other voices are optional: pick one in the Live tab and click *Download this voice* (about 64 MB each, from a fixed revision of `rhasspy/piper-voices` on Hugging Face). Every voice file is checked with SHA-256 before use.
+- **Extension:** download `pipe-up-extension.zip` (about 64 MB, most of it the included voice) from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. The voice works right after install, with nothing to download: one voice is included, and it is used once you choose a voice output in the call panel (from your next call, or after you reload the Meet tab; with *Chat only*, Meet's microphone is left untouched). The two other voices are optional: pick one in the Live tab and click *Download this voice* (about 64 MB each, from a fixed revision of `rhasspy/piper-voices` on Hugging Face). Every voice file is checked with SHA-256 before use.
 
 Without Gemini Nano, the extension offers the quick phrases, your own typed replies and three basic replies. Its cloud path needs an App Check debug token, which is not published: use the hosted demo to try the cloud path.
 

@@ -1,9 +1,9 @@
 // Runs in Meet's own page (MAIN world) before Meet asks for the microphone.
-// When the Pipe Up voice is set up, it hands Meet a microphone track that
-// mixes the real microphone with Pipe Up's locally synthesized voice, so other
-// participants hear the reply the user chose. While Pipe Up speaks, the real
-// microphone is muted. When the voice is not set up, Meet gets the plain
-// microphone, untouched.
+// When a voice is ready and the user chose a voice output, it hands Meet a
+// microphone track that mixes the real microphone with Pipe Up's locally
+// synthesized voice, so other participants hear the reply the user chose.
+// While Pipe Up speaks, the real microphone is muted. Otherwise ("Chat only", or no voice), Meet gets the
+// plain microphone, untouched.
 (() => {
   const md = navigator.mediaDevices;
   if (!md?.getUserMedia || md.__pipeUpPatched) return;
@@ -15,7 +15,7 @@
   const voiceWanted = () => document.documentElement.dataset.pipeUpVoice === 'on';
   let ctx = null;
   let bus = null;
-  let plainMics = 0; // microphones handed out before the voice was set up
+  let plainMics = 0; // microphones handed out while no voice output was chosen
   const mixes = new Set(); // one per microphone stream Meet asked for
   let queue = Promise.resolve();
   let playId = 0;
