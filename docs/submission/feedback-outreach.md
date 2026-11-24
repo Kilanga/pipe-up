@@ -49,7 +49,7 @@ Choose one of the two bracketed options in the second sentence; it must be true.
 >
 > No one who stutters has tried it yet. I would rather hear now that something is wrong than keep guessing.
 >
-> Would you spend ten minutes on the demo and tell me what you think? There is nothing to install and no account: https://pipe-up-demo.web.app (click "Load Sam's sample briefing", then "Start the call").
+> Would you spend ten minutes on the demo and tell me what you think? There is nothing to install and no account: https://pipe-up-demo.web.app (click "1. Load Sam's sample briefing", then "3. Start the call").
 >
 > Three questions. Answer any of them, in a few lines:
 > 1. Would the "I'm still speaking" key be of use to you in a real meeting?
