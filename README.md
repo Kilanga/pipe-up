@@ -29,7 +29,7 @@ Pipe Up starts from those two ideas. It reads the captions Google Meet already s
 - **Prepare for the call:** one click turns the briefing into up to 6 likely questions, each with a short answer you can edit, add to or delete. *Prepare with the cloud* shows what will be sent and asks you to confirm, then makes one request; it does not turn on the cloud for the call. *Prepare on this computer* does the same with Gemini Nano, part by part, with a *Stop* button. A prepared answer with a number, a link or an e-mail address that is not in your briefing is discarded. During the call, a matching prepared answer is offered as a reply, labelled *From your briefing*.
 - **Learns your phrasing, on your device:** the replies you pick, edit or write become style examples (IndexedDB, 90 days, 500 at most). Each one is kept with the suggestions that were shown and up to 20 key words of the caption line it answered, not the sentence (numbers are never kept as key words). The same is kept, without a reply, when you press **4** or **Esc**. You can switch learning off, see what was learned and delete it. No audio is recorded.
 - **Display and reading options** (all off by default): *Easy reading* (more spacing, larger text, replies of 8 words at most), *One suggestion at a time*, *Hear the suggestions* (a reading aid, like a screen reader, in your own headphones; it is never played into the call), *High contrast* (nothing relies on color alone), *Reduce motion* (the system setting is always followed).
-- **Output:** Meet chat, a synthetic voice in the call, or both. A computer voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet silences it at once. Three English voices to choose from. The quick phrases and the Alt+D line are synthesized in advance, so they are spoken without waiting. A reply the voice cannot speak goes to the chat.
+- **Output:** Meet chat, a synthetic voice in the call, or both. A computer voice is generated on your computer and mixed into your microphone only while it speaks; muting in Meet silences it at once. Three English voices to choose from: one is included and works right after install, the two others are optional downloads. The quick phrases and the Alt+D line are synthesized in advance, so they are spoken without waiting. A reply the voice cannot speak goes to the chat.
 - **Optional, off by default:** also raise your hand in Meet when you send "I'm still speaking" (extension only).
 
 ## No stealth mode
@@ -108,13 +108,13 @@ core/        engine (Firebase AI Logic), preparation, request runner, prompt, br
 shared/      in-call overlay, settings/briefing/memory screens, document reader
 extension/   Manifest V3 extension (content scripts, side panel, voice worker)
 demo-web/    hosted demo: a simulated call using the same core and overlay
-test/        131 unit tests (`npm test`) and 8 end-to-end scripts with 283 checks: demo, extension, security, interface, network, voice-mixer, autoplay, voice (`node test/e2e/<name>.mjs` after `npm run build`; they need Playwright and Chrome)
+test/        135 unit tests (`npm test`) and 8 end-to-end scripts with 303 checks: demo, extension, security, interface, network, voice-mixer, autoplay, voice (`node test/e2e/<name>.mjs` after `npm run build`; they need Playwright and Chrome)
 ```
 
 ## Try it
 
 - **Hosted demo:** https://pipe-up-demo.web.app — no account, no token. Its voice is the browser's speech synthesis; the extension uses the local Piper voice.
-- **Extension:** download `pipe-up-extension.zip` from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. For the voice, pick one in the Live tab and click *Set up the voice* (one download of about 64 MB per voice, from a fixed revision of `rhasspy/piper-voices` on Hugging Face, checked with SHA-256 before use). If you used the voice of version 0.3.1 or earlier, set one up again: that voice was removed.
+- **Extension:** download `pipe-up-extension.zip` (about 64 MB, most of it the included voice) from the [latest release](https://github.com/Kilanga/pipe-up/releases/latest) and unzip it into a new folder. Open `chrome://extensions`, enable *Developer mode*, click *Load unpacked* and pick that folder. Join a Meet call, turn on captions (CC), click the Pipe Up icon to open the side panel, then *Set up on-device AI*. The voice works right after install, with nothing to download: one voice is included, and it is used once you choose a voice output in the call panel. The two other voices are optional: pick one in the Live tab and click *Download this voice* (about 64 MB each, from a fixed revision of `rhasspy/piper-voices` on Hugging Face). Every voice file is checked with SHA-256 before use.
 
 Without Gemini Nano, the extension offers the quick phrases, your own typed replies and three basic replies. Its cloud path needs an App Check debug token, which is not published: use the hosted demo to try the cloud path.
 
@@ -132,12 +132,12 @@ Without Gemini Nano, the extension offers the quick phrases, your own typed repl
 1. Create a Firebase project, add a Web app, enable **Firebase AI Logic** (Gemini Developer API).
 2. App Check: register a reCAPTCHA Enterprise site key for your hosting domain; for the extension, create a debug token and paste it in *Settings → Cloud access*. Never commit it.
 3. Copy `config/firebase.example.json` to `config/firebase.local.json` and fill it in (git-ignored).
-4. `npm install && npm test && npm run build` → `dist/extension`, `dist/demo`, `dist/pipe-up-extension.zip`.
+4. `npm install && npm test && npm run build` → `dist/extension`, `dist/demo`, `dist/pipe-up-extension.zip`. The first build downloads the included voice (64 MB) from Hugging Face, checks its SHA-256 and keeps it in `.cache/voices/`; later builds need no network.
 5. `firebase deploy --only hosting,remoteconfig`.
 
 ## Privacy
 
-Pipe Up reads the captions Meet already shows. It never records audio. No transcript is kept: the last few caption lines are held in memory during the call. When you send a reply, or press **4** or **Esc**, up to 20 key words of the line it answered are stored on your computer with the suggestions shown (see the *Memory* tab), never the sentence; nothing is stored with *Don't learn from my replies*. For the voice, it mixes a synthetic voice into your microphone stream only while it plays. No analytics. Network use: Firebase (Remote Config and Firebase Installations, which gives the browser a random ID, each time Pipe Up starts, before any consent; the Gemini API only on the consent-based cloud path) and one download of the voice model from Hugging Face if you set up the voice. The hosted demo also loads reCAPTCHA Enterprise for App Check (it sets a Google cookie), only when a cloud request is made. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
+Pipe Up reads the captions Meet already shows. It never records audio. No transcript is kept: the last few caption lines are held in memory during the call. When you send a reply, or press **4** or **Esc**, up to 20 key words of the line it answered are stored on your computer with the suggestions shown (see the *Memory* tab), never the sentence; nothing is stored with *Don't learn from my replies*. For the voice, it mixes a synthetic voice into your microphone stream only while it plays. No analytics. Network use: Firebase (Remote Config and Firebase Installations, which gives the browser a random ID, each time Pipe Up starts, before any consent; the Gemini API only on the consent-based cloud path) and one download from Hugging Face for each optional voice you choose (the included voice needs none). The hosted demo also loads reCAPTCHA Enterprise for App Check (it sets a Google cookie), only when a cloud request is made. Permissions: `meet.google.com`, storage, side panel, clipboard (fallback when the chat cannot be reached).
 
 ## Known limits
 
@@ -164,6 +164,6 @@ First commit: November 12, 2026. No pre-existing project code was reused. The co
 
 ## License
 
-Pipe Up's code: [Apache-2.0](LICENSE). The built extension also bundles separately licensed components, including the optional voice module's phonemizer (espeak-ng, GPL-3.0-or-later). The voices are downloaded on request and are trained on public-domain recordings: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Pipe Up's code: [Apache-2.0](LICENSE). The built extension also bundles separately licensed components, including the optional voice module's phonemizer (espeak-ng, GPL-3.0-or-later). The voices are trained on public-domain recordings; one is included in the extension and the two others are downloaded on request: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Pipe Up is an independent project, not affiliated with or endorsed by Google. Google Meet, Chrome, Gemini and Firebase are trademarks of Google LLC.
