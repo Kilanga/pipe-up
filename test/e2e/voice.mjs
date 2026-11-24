@@ -4,7 +4,7 @@
 // Needs Playwright and Google Chrome; set PLAYWRIGHT and CHROME to override the paths.
 // VOICES_DIR=/folder/ uses voice files already on disk instead of the network.
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const { chromium } = await import(process.env.PLAYWRIGHT || '/opt/npm-tools/node_modules/playwright/index.mjs');
@@ -13,12 +13,46 @@ const CHROME = process.env.CHROME || '/usr/bin/google-chrome';
 const LOCAL = process.env.VOICES_DIR || '';
 const EXT = REPO + 'dist/extension';
 const [FEMALE, , MALE] = VOICES;
+// A silent microphone (one second of silence, played in a loop by Chrome's
+// fake device), so that what is heard on the track Meet uses is the voice.
+const SILENCE = tmpdir() + '/pipe-up-silence.wav';
+{
+  const n = 48000 * 2; const b = Buffer.alloc(44 + n);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(48000, 24); b.writeUInt32LE(96000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n, 40);
+  writeFileSync(SILENCE, b);
+}
 const ctx = await chromium.launchPersistentContext(mkdtempSync(tmpdir() + '/pipe-up-voice-'), {
   executablePath: CHROME, headless: true,
-  args: ['--no-sandbox', `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+  args: ['--no-sandbox', `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${SILENCE}`, '--autoplay-policy=no-user-gesture-required'],
 });
-// A stand-in for Meet: chat, captions, a microphone in use, and a probe that
-// measures every piece of audio Pipe Up sends to the call.
+// The audio goes from the side panel to the page script over a private
+// channel that the Meet page cannot see, so the probe sits in the side panel:
+// it measures every piece of audio Pipe Up sends towards the call.
+await ctx.addInitScript(() => {
+  if (!globalThis.chrome?.tabs?.connect) return; // only the extension's own pages
+  const db = (v) => Math.round(200 * Math.log10(v || 1e-9)) / 10;
+  // Median pitch of the voiced parts (autocorrelation, 60 to 400 Hz).
+  function pitch(x, rate) { const win = Math.round(0.04 * rate), out = []; let peak = 0; for (const v of x) peak = Math.max(peak, Math.abs(v));
+    for (let s = 0; s + win < x.length; s += win) { let e = 0; for (let i = 0; i < win; i++) e += x[s + i] * x[s + i]; if (Math.sqrt(e / win) < peak * 0.08) continue; let best = 0, lag = 0;
+      for (let L = Math.round(rate / 400); L <= Math.round(rate / 60); L++) { let c = 0, a = 0, b = 0; for (let i = 0; i + L < win; i++) { c += x[s + i] * x[s + i + L]; a += x[s + i] * x[s + i]; b += x[s + i + L] * x[s + i + L]; } const r = c / Math.sqrt(a * b || 1); if (r > best) { best = r; lag = L; } }
+      if (best > 0.6) out.push(rate / lag); }
+    out.sort((a, b) => a - b); return out.length ? Math.round(out[out.length >> 1]) : 0; }
+  window.__heard = [];
+  function record({ pcm16, rate }) {
+    const bin = atob(pcm16); const p = new Float32Array(bin.length / 2);
+    for (let i = 0; i < p.length; i++) p[i] = (((bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16) >> 16) / 0x7fff;
+    let peak = 0; for (const v of p) peak = Math.max(peak, Math.abs(v));
+    // Silence is measured as the code trims it (voice-audio.js): 45 dB below the peak.
+    const floor = peak * 10 ** (-45 / 20); let first = -1, last = -1;
+    for (let i = 0; i < p.length; i++) if (Math.abs(p[i]) >= floor) { if (first < 0) first = i; last = i; }
+    window.__heard.push({ at: Date.now(), ms: Math.round((1000 * p.length) / rate), rate, peakDb: db(peak), leadMs: Math.round((1000 * first) / rate), tailMs: Math.round((1000 * (p.length - 1 - last)) / rate), pitchHz: pitch(p, rate) });
+  }
+  const connect = chrome.tabs.connect.bind(chrome.tabs);
+  chrome.tabs.connect = (...args) => { const port = connect(...args); const post = port.postMessage.bind(port); port.postMessage = (m) => { if (m?.type === 'audio') record(m); return post(m); }; return port; };
+});
+// A stand-in for Meet: chat, captions, and a microphone in use whose level
+// (what the call receives) can be read.
 const MEET_HTML = `<!doctype html><html><body>
 <button aria-pressed="false" aria-label="Chat with everyone" id="tog" onclick="this.setAttribute('aria-pressed','true');document.getElementById('chatp').hidden=false">Chat</button>
 <div id="chatp" hidden><ol id="msgs"></ol><div><textarea aria-label="Send a message" id="box"></textarea>
@@ -26,22 +60,9 @@ const MEET_HTML = `<!doctype html><html><body>
 <div role="region" aria-label="Captions" id="cap"></div>
 <script>
 window.say=(who,t)=>{const d=document.createElement('div');d.innerText=who+'\\n'+t;document.getElementById('cap').append(d);};
-window.heard=[]; window.statuses=[];
-const db=(v)=>Math.round(200*Math.log10(v||1e-9))/10;
-// Median pitch of the voiced parts (autocorrelation, 60 to 400 Hz).
-function pitch(x,rate){const win=Math.round(0.04*rate),out=[];let peak=0;for(const v of x)peak=Math.max(peak,Math.abs(v));
-  for(let s=0;s+win<x.length;s+=win){let e=0;for(let i=0;i<win;i++)e+=x[s+i]*x[s+i];if(Math.sqrt(e/win)<peak*0.08)continue;let best=0,lag=0;
-    for(let L=Math.round(rate/400);L<=Math.round(rate/60);L++){let c=0,a=0,b=0;for(let i=0;i+L<win;i++){c+=x[s+i]*x[s+i+L];a+=x[s+i]*x[s+i];b+=x[s+i+L]*x[s+i+L];}const r=c/Math.sqrt(a*b||1);if(r>best){best=r;lag=L;}}
-    if(best>0.6)out.push(rate/lag);}
-  out.sort((a,b)=>a-b);return out.length?Math.round(out[out.length>>1]):0;}
-addEventListener('message',(e)=>{
-  if(e.data?.type==='pipe-up:pcm-status') statuses.push(e.data);
-  if(e.data?.type!=='pipe-up:pcm') return;
-  const p=e.data.pcm, rate=e.data.rate; let peak=0, sum=0, first=-1, last=-1;
-  for(let i=0;i<p.length;i++){const a=Math.abs(p[i]); if(a>peak) peak=a; sum+=a*a; if(a>0.01){ if(first<0) first=i; last=i; }}
-  heard.push({ at: performance.now(), ms: Math.round(1000*p.length/rate), rate, peakDb: db(peak), rmsDb: db(Math.sqrt(sum/p.length)), leadMs: Math.round(1000*first/rate), tailMs: Math.round(1000*(p.length-1-last)/rate), pitchHz: pitch(p,rate) });
-});
-navigator.mediaDevices.getUserMedia({audio:true}).then((s)=>(window.mic=s));
+navigator.mediaDevices.getUserMedia({audio:true}).then((s)=>{window.mic=s; const ac=new AudioContext(); const an=ac.createAnalyser(); an.fftSize=2048; ac.createMediaStreamSource(new MediaStream([s.getAudioTracks()[0]])).connect(an);
+  // Loudest sample on the track handed to Meet, over the next ms.
+  window.loudest=async(ms)=>{let m=0; const d=new Float32Array(an.fftSize); const end=performance.now()+ms; while(performance.now()<end){an.getFloatTimeDomainData(d); for(const v of d) m=Math.max(m,Math.abs(v)); await new Promise((r)=>setTimeout(r,30));} return Math.round(1000*m)/1000;};});
 </script></body></html>`;
 await ctx.route('https://meet.google.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: MEET_HTML }));
 
@@ -67,7 +88,7 @@ async function openPanel() {
 }
 ctx.on('request', (q) => /^https?:/.test(q.url()) && /\.(m?js|wasm)(\?|$)/.test(q.url()) && remote.push(q.url()));
 await openPanel();
-const section = () => panel.locator('#pu-pane-Live .field', { has: panel.locator('h2', { hasText: 'Voice into the call' }) }).first();
+const section = () => panel.locator('#pu-pane-Live .field', { has: panel.locator('h2', { hasText: 'Computer voice in the call' }) }).first();
 const status = () => section().locator('p[role=status]').innerText();
 const button = (name) => section().getByRole('button', { name });
 const waitFor = async (re, seconds = 180) => { for (let i = 0; i < seconds * 2; i++) { if (re.test(await status())) return true; await panel.waitForTimeout(500); } return false; };
@@ -105,13 +126,13 @@ await meet.waitForTimeout(6000); // time to prepare the quick phrases
 
 // Uses a shortcut and reports what the call received, and how long it took.
 async function speak(press) {
-  const before = await meet.evaluate(() => heard.length);
-  const at = await meet.evaluate(() => performance.now());
+  const before = await panel.evaluate(() => window.__heard.length);
+  const at = Date.now();
   await press();
   for (let i = 0; i < 300; i++) {
     await meet.waitForTimeout(50);
-    const h = await meet.evaluate((n) => heard[n], before);
-    if (h) return { ...h, waitMs: Math.round(h.at - at), at: undefined };
+    const h = await panel.evaluate((n) => window.__heard[n], before);
+    if (h) return { ...h, waitMs: h.at - at, at: undefined };
   }
   return null;
 }
@@ -120,10 +141,12 @@ const levels = (name, h) => {
   ok(`${name}: peak at -3 dBFS`, h.peakDb <= -2.9 && h.peakDb >= -3.1, `${h.peakDb} dBFS`);
   ok(`${name}: no long silence around the words`, h.leadMs <= 80 && h.tailMs <= 150, `${h.leadMs} ms before, ${h.tailMs} ms after`);
 };
+const quiet = await meet.evaluate(() => loudest(400));
 const first = await speak(() => meet.keyboard.press('Alt+1'));
+const inCall = await meet.evaluate(() => loudest(700));
 ok('Alt+1 is spoken into the call', !!first && first.ms > 800 && first.ms < 4000, JSON.stringify(first));
 ok('Alt+1 was ready in advance', !!first && first.waitMs < 200, `${first?.waitMs} ms`);
-ok('the call accepted the audio', (await meet.evaluate(() => statuses.at(-1)?.ok)) === true, JSON.stringify(await meet.evaluate(() => statuses.at(-1))));
+ok('the voice is heard on the microphone track Meet uses', quiet < 0.01 && inCall > 0.1, `level ${quiet} before, ${inCall} while speaking`);
 ok('"voice only": nothing posted in the chat', (await meet.evaluate(() => document.querySelectorAll('#msgs li').length)) === 0);
 levels('quick phrase', first);
 await meet.waitForTimeout(2500);
@@ -145,7 +168,7 @@ await meet.waitForTimeout(3000);
 
 // ---------- Choosing another voice ----------
 await section().locator('select').selectOption(MALE.id); await panel.waitForTimeout(500);
-ok('another voice is not downloaded without asking', /not on your computer yet/.test(await status()) && (await stored()).length === 2, await status());
+ok('another voice is not downloaded without asking', /not on this computer yet/.test(await status()) && (await stored()).length === 2, await status());
 const during = await speak(() => meet.keyboard.press('Alt+1'));
 ok('the current voice stays in use meanwhile', !!during && during.pitchHz > 165, JSON.stringify(during));
 await button(/Download this voice \(64 MB, once\)/).click();
@@ -178,4 +201,6 @@ ok('a changed voice file is refused and removed', !(await stored()).includes(FEM
 ok('the other downloaded voice is used instead', usable && (await section().locator('select').inputValue()) === MALE.id, await status());
 ok('no code loaded from the network', remote.length === 0, remote.join(' '));
 console.log(R.join('\n')); console.log('ERRORS:', errs.join('\n') || 'none');
+// A failed check or an unexpected error makes the script fail (CI, pre-commit).
+if (R.some((l) => l.startsWith('FAIL')) || errs.length) process.exitCode = 1;
 await ctx.close();

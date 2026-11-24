@@ -4,7 +4,7 @@
 // so two windows never answer the same question twice.
 import { initFirebase, SuggestionEngine } from '../../core/engine.js';
 import { IdbMemoryStore, makeEvent } from '../../core/memory.js';
-import { DEFAULT_SETTINGS, migrateSettings } from '../../core/config.js';
+import { DEFAULT_SETTINGS, migrateSettings, voiceOutputWithoutVoice } from '../../core/config.js';
 import { SuggestionRunner } from '../../core/runner.js';
 import { mountControls } from '../../shared/controls.js';
 import { setPdfWorker } from '../../shared/extract.js';
@@ -88,7 +88,7 @@ const controls = mountControls(document.getElementById('app'), {
     },
     choose: chooseVoice,
     test: async () => {
-      const { pcm16, rate } = await synthesize('Hi, this is my Pipe Up voice.');
+      const { pcm16, rate } = await synthesize('Hi, this is the Pipe Up computer voice.');
       playLocally(pcm16, rate);
     },
   },
@@ -178,6 +178,9 @@ async function startSavedVoice() {
   }
   // Meet tabs must not expect a voice that is not there.
   chrome.storage.local.set({ voiceInstalled: false });
+  // Coming from 0.3.1 (whose voices are gone) with "voice" still chosen:
+  // back to "Chat only", or every send would say the voice is not set up.
+  if (voiceOutputWithoutVoice(settings, have)) await settingsStore.set({ outputMode: 'chat' });
   controls.refreshVoice();
 }
 
@@ -299,10 +302,10 @@ async function onTabMessage(p, msg) {
     runner.cancelEarly();
   } else if (msg?.type === 'speak') {
     try {
-      safePost(p, { type: 'audio', ...(await synthesize(msg.text)) });
+      safePost(p, { type: 'audio', id: msg.id, ...(await synthesize(msg.text)) });
     } catch (e) {
       console.warn('[Pipe Up] voice failed', e);
-      safePost(p, { type: 'speak-failed' });
+      safePost(p, { type: 'speak-failed', id: msg.id });
     }
   } else if (msg?.type === 'preview') {
     preview(msg.text);

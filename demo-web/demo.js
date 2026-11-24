@@ -210,6 +210,7 @@ const runner = new SuggestionRunner({
   onResult: (job, res) => {
     if (job.id !== requestId) return; // a newer line arrived meanwhile
     overlay.setSuggestions(res.replies, res.route, job.lines.at(-1)?.text);
+    showPanel(); // the panel grew with the suggestions
     scheduleAutoNext();
     if (res.route === 'blocked') {
       overlay.notice(
@@ -261,8 +262,20 @@ function ask(lines) {
   runner.request({ id, lines });
 }
 
+// On a small screen the Pipe Up panel is below the call: when a line is
+// played it is brought into view, so the suggestions are not missed.
+const slot = document.getElementById('overlay-slot');
+function showPanel() {
+  const r = slot.getBoundingClientRect();
+  if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+  const calm = settings.reduceMotion || matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The panel itself first; the call above it stays visible when there is room.
+  slot.scrollIntoView({ block: r.height > window.innerHeight ? 'start' : 'end', behavior: calm ? 'auto' : 'smooth' });
+}
+
 const nextBtn = document.getElementById('next');
 nextBtn.addEventListener('click', () => {
+  showPanel();
   if (step >= SCRIPT.length) step = 0;
   const [who, text] = SCRIPT[step++];
   nextBtn.textContent = step >= SCRIPT.length ? 'Restart the call' : 'Next line';

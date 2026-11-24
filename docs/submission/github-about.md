@@ -9,10 +9,10 @@ Checked on November 23, 2026 with `gh api repos/Kilanga/pipe-up`:
 | Topics | none | to set |
 | License | Apache-2.0, detected from `LICENSE` | OK |
 
-## Description (316 characters, limit 350)
+## Description (326 characters, limit 350)
 
 ```
-Pipe Up: a backup channel for people who stutter in Google Meet. One key holds the floor; short replies come from what you prepared and are sent only on your keypress. Gemini Nano on device first, cloud only with consent, through Firebase AI Logic hybrid inference. Chrome extension and hosted demo. No stealth mode.
+Pipe Up: a backup channel for people who stutter in Google Meet. One key holds the floor; short replies come from what you prepared and are sent only on your key press or click. Gemini Nano on device first, cloud only with consent, through Firebase AI Logic hybrid inference. Chrome extension and hosted demo. No stealth mode.
 ```
 
 ## Website
@@ -44,7 +44,7 @@ Or with the GitHub CLI, from an account that owns the repository:
 
 ```
 gh repo edit Kilanga/pipe-up \
-  --description "Pipe Up: a backup channel for people who stutter in Google Meet. One key holds the floor; short replies come from what you prepared and are sent only on your keypress. Gemini Nano on device first, cloud only with consent, through Firebase AI Logic hybrid inference. Chrome extension and hosted demo. No stealth mode." \
+  --description "Pipe Up: a backup channel for people who stutter in Google Meet. One key holds the floor; short replies come from what you prepared and are sent only on your key press or click. Gemini Nano on device first, cloud only with consent, through Firebase AI Logic hybrid inference. Chrome extension and hosted demo. No stealth mode." \
   --homepage "https://pipe-up-demo.web.app" \
   --add-topic firebase-ai-logic,firebase,gemini-nano,hybrid-inference,on-device-ai,chrome-extension,google-meet,accessibility,stuttering,assistive-technology
 ```

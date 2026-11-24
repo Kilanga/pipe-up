@@ -107,7 +107,7 @@ export class SuggestionRunner {
       });
     } catch (e) {
       console.warn('[Pipe Up] suggestion failed', e);
-      res = { replies: FALLBACK_REPLIES, route: 'fallback', reason: String(e?.message || e), error: String(e?.message || e) };
+      res = { replies: FALLBACK_REPLIES, route: 'fallback', reason: 'Pipe Up could not start its AI: basic replies', error: String(e?.message || e) };
     }
     if (this.#run !== r || res.cancelled) return; // replaced, cancelled or timed out meanwhile
     clearTimeout(r.timer);
@@ -133,6 +133,9 @@ export class SuggestionRunner {
     if (this.#run !== r) return;
     this.#run = null;
     r.ctl.abort();
+    // The model may be stuck and deaf to the cancellation: the questions
+    // that follow must not wait behind it.
+    this.peekEngine?.()?.releaseDevice?.();
     if (r.early) return;
     const reason = `No answer after ${this.timeoutMs / 1000} s`;
     const res = { replies: FALLBACK_REPLIES, route: 'fallback', reason, error: reason };

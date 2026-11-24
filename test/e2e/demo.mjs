@@ -30,7 +30,7 @@ const prep = (pg) => ({
   settings: () => pg.evaluate(() => JSON.parse(localStorage.getItem('pu-settings') || '{}')),
   overlay: () => pg.evaluate(() => { const r = document.querySelector('#pipe-up-overlay')?.shadowRoot; return { cards: [...r.querySelectorAll('.card')].map(c => c.textContent), badge: r.querySelector('.badge').textContent }; }),
 });
-const ov = () => page.evaluate(() => { const r = document.querySelector('#pipe-up-overlay')?.shadowRoot; return { cards: [...r.querySelectorAll('.card')].map(c => c.textContent), sel: [...r.querySelectorAll('.card')].findIndex(c => c.classList.contains('sel')), badge: r.querySelector('.badge').textContent, notice: r.querySelector('.notice')?.hidden ? '' : r.querySelector('.notice')?.textContent, typed: r.querySelector('input[type=text]').value, active: r.activeElement?.tagName || null, status: r.querySelector('[role=status]')?.textContent }; });
+const ov = () => page.evaluate(() => { const r = document.querySelector('#pipe-up-overlay')?.shadowRoot; return { cards: [...r.querySelectorAll('.card')].map(c => c.textContent), sel: [...r.querySelectorAll('.card')].findIndex(c => c.classList.contains('sel')), badge: r.querySelector('.badge').textContent, notice: r.querySelector('.notice')?.hidden ? '' : r.querySelector('.notice')?.textContent, typed: r.querySelector('.typed').value, active: r.activeElement?.tagName || null, status: r.querySelector('[role=status]')?.textContent }; });
 const chat = async () => (await page.locator('#chat').innerText()).split('\n').filter(Boolean);
 const next = async () => { await page.click('#next'); await page.waitForTimeout(3500); };
 const URL_ = `http://localhost:${PORT}/`;
@@ -42,10 +42,10 @@ await next(); let o = await ov();
 ok('3 cards after first line', o.cards.length === 3, JSON.stringify(o.badge));
 await page.keyboard.press('2'); o = await ov(); ok('key 2 selects', o.sel === 1, 'active=' + o.active);
 await page.keyboard.press('Enter'); await page.waitForTimeout(300);
-let c = await chat(); ok('Enter sends reply 2', c.at(-1)?.includes(o.cards[1].replace(/^2/, '').replace(/General reply|From your briefing/, '').trim().slice(0, 15)), c.at(-1));
+let c = await chat(); ok('Enter sends reply 2', c.at(-1)?.includes(o.cards[1].replace(/^2/, '').replace(/From your briefing/, '').trim().slice(0, 15)), c.at(-1));
 o = await ov(); ok('cards cleared after send', o.cards.length === 0);
 await next(); await page.keyboard.press('1'); await page.keyboard.press('Tab'); o = await ov();
-ok('Tab opens edit', o.typed.length > 0 && o.active === 'INPUT', o.typed);
+ok('Tab opens edit', o.typed.length > 0 && o.active === 'TEXTAREA', o.typed);
 await page.keyboard.type(' today'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
 c = await chat(); ok('edited reply sent', c.at(-1)?.endsWith('today'), c.at(-1));
 await next(); await page.keyboard.press('4'); await page.waitForTimeout(300);
@@ -117,7 +117,7 @@ await P.cloudBtn.click(); await P.confirm.getByRole('button', { name: 'Continue'
 await P.rows.first().waitFor({ timeout: 15000 }).catch(() => {});
 ok('cloud: one request, carrying the briefing text', cloud0.length === 1 && cloud0[0].body.includes('Zorvex') && cloud0[0].url.includes(':generateContent'), String(cloud0.length));
 ok('cloud: the request used PREFER_IN_CLOUD and JSON schema output', cloud0[0]?.body.includes('responseJsonSchema') && cloud0[0]?.body.includes('"items"'));
-ok('cloud: the focus moves to the first prepared question', await P.rows.nth(0).locator('input').evaluate((i) => i === document.activeElement));
+ok('cloud: the focus moves to the first prepared question', await P.rows.nth(0).locator('textarea.q').evaluate((i) => i === document.activeElement));
 ok('cloud: the prepared answers are listed for review', (await P.rows.count()) === 4 && /Check and edit: these are your answers, in your words\./.test(await P.section.innerText()), String(await P.rows.count()));
 let st = await P.status.innerText();
 ok('cloud: an answer with an invented number is left out, and it is said', /4 questions prepared with the cloud\. 1 answer was left out/.test(st), st);
@@ -127,17 +127,17 @@ let plog = await P.log();
 ok('log: "Cloud · preparation · 4 Q&A · n s"', /Cloud · preparation · 4 Q&A · \d+\.\d s/.test(plog) && /sent once to the Gemini API/.test(plog), plog.split('\n')[0]);
 ok('briefing status counts the prepared answers', /4 prepared answer/.test(await page.locator('#pu-pane-Briefing [role=status]').first().innerText()));
 // review: edit, delete, add; stored on this computer only
-await P.rows.nth(0).locator('textarea').fill('Signed, except the penalty clause. Legal reviews it on Friday.'); await page.keyboard.press('Tab'); await page.waitForTimeout(200);
+await P.rows.nth(0).locator('textarea.a').fill('Signed, except the penalty clause. Legal reviews it on Friday.'); await page.keyboard.press('Tab'); await page.waitForTimeout(200);
 ok('edit: stored with the briefing', (await P.stored())[0]?.answer === 'Signed, except the penalty clause. Legal reviews it on Friday.');
 await P.rows.nth(3).getByRole('button', { name: 'Delete question 4' }).click(); await page.waitForTimeout(200);
 ok('delete: one answer less, focus stays in the section', (await P.rows.count()) === 3 && (await P.stored()).length === 3 && await page.evaluate(() => Boolean(document.activeElement?.closest('section.prep'))));
 await page.getByRole('button', { name: 'Add a question' }).click();
-ok('add: a new empty question takes the focus', (await P.rows.count()) === 4 && await P.rows.nth(3).locator('input').evaluate((i) => i === document.activeElement));
+ok('add: a new empty question takes the focus', (await P.rows.count()) === 4 && await P.rows.nth(3).locator('textarea.q').evaluate((i) => i === document.activeElement));
 await page.keyboard.type('Did you send the risk log?'); await page.keyboard.press('Tab'); await page.keyboard.type('Yes, I sent it to Maya on Monday.'); await page.keyboard.press('Tab'); await page.waitForTimeout(200);
 ok('add: stored when both fields are filled', (await P.stored()).length === 4 && (await P.stored())[3].question === 'Did you send the risk log?');
 ok('nothing more was sent while editing', cloud0.length === 1);
 await page.reload(); await page.waitForTimeout(1500); await page.click('#pu-tab-Briefing');
-ok('prepared answers kept after reload', (await P.rows.count()) === 4 && (await P.rows.nth(0).locator('textarea').inputValue()).startsWith('Signed, except'));
+ok('prepared answers kept after reload', (await P.rows.count()) === 4 && (await P.rows.nth(0).locator('textarea.a').inputValue()).startsWith('Signed, except'));
 // during the call, with no model at all: the prepared answer is still offered, from this computer
 await next(); o = await ov();
 ok('call without any model: the prepared answer comes first, tagged "From your briefing"', o.cards[0]?.includes('Signed, except the penalty clause') && o.cards[0]?.includes('From your briefing') && o.cards.length === 3, o.cards[0]);
@@ -148,8 +148,9 @@ refuse0 = true;
 await P.cloudBtn.click(); await P.confirm.getByRole('button', { name: 'Continue' }).click(); await page.waitForTimeout(3000);
 ok('after a failure the buttons work again and the focus is back', await P.cloudBtn.isEnabled() && await P.cloudBtn.evaluate((b) => b === document.activeElement));
 st = await P.status.innerText(); plog = await P.log();
-ok('cloud refused, no Gemini Nano: clear message, answers kept', /The preparation did not work \(.*403.*\)\. You can prepare on this computer if Gemini Nano is ready\./.test(st) && !/https?:/.test(st) && (await P.rows.count()) === 4, st);
-ok('log: the failed preparation is listed as not generated', /Not generated · preparation · 0 Q&A/.test(plog.split('\n')[0]), plog.split('\n')[0]);
+ok('cloud refused, no Gemini Nano: clear message, answers kept', /^The cloud could not prepare your answers this time\. You can prepare on this computer if Gemini Nano is ready\.$/.test(st) && !/https?:|403/.test(st) && (await P.rows.count()) === 4, st);
+ok('log: the failed preparation is listed as not prepared, with the mode that was asked for', /Not prepared · preparation · 0 Q&A/.test(plog.split('\n')[0]) && /\(PREFER_IN_CLOUD\)/.test(plog.split('\n')[1]), plog.split('\n').slice(0, 2).join(' / '));
+ok('log: the technical reason is kept as a tooltip, not as text', /403/.test((await page.locator('.log li').first().getAttribute('title')) || '') && !/403/.test(plog));
 // deleting the briefing deletes the prepared answers with it
 await page.getByRole('button', { name: 'Delete briefing' }).click(); await page.waitForTimeout(300);
 ok('delete briefing: prepared answers go with it', (await P.rows.count()) === 0 && (await P.stored()).length === 0 && await P.section.isHidden());
@@ -239,5 +240,34 @@ ok('Stop: the on-device request is aborted, the list is kept', n.prompts.at(-1).
 ok('Stop: the focus returns to the button that started it', await D.deviceBtn.evaluate((b) => b === document.activeElement));
 await dev.evaluate(() => (window.__nano.delay = 300));
 await dev.close();
+// ---- The README's "For judges" steps, followed to the letter on a computer without Gemini Nano ----
+{
+  const j = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  j.on('pageerror', e => errs.push('PAGEERROR(judge) ' + e.message));
+  await fakeCloud(j, prepReply);
+  const jov = () => j.evaluate(() => { const r = document.querySelector('#pipe-up-overlay').shadowRoot; return { cards: [...r.querySelectorAll('.card')].map(c => c.textContent), sel: [...r.querySelectorAll('.card')].findIndex(c => c.classList.contains('sel')), notice: r.querySelector('.notice').textContent }; });
+  const jchat = async () => (await j.locator('#chat').innerText()).split('\n').filter(Boolean);
+  await j.goto(URL_); await j.waitForTimeout(1500);
+  await j.getByRole('button', { name: "1. Load Sam's sample briefing" }).click(); await j.waitForTimeout(2000);
+  await j.getByRole('button', { name: '2. Prepare the answers' }).click();
+  await j.getByRole('button', { name: 'Prepare with the cloud' }).click();
+  await j.getByRole('button', { name: 'Continue' }).click(); await j.locator('section.prep ol.qa li').first().waitFor({ timeout: 15000 }).catch(() => {});
+  ok('judge path: "Prepare with the cloud" and confirm lists the prepared answers', (await j.locator('section.prep ol.qa li').count()) === 4);
+  await j.getByRole('button', { name: '3. Start the call' }).click(); await j.waitForTimeout(3000);
+  let jo = await jov();
+  ok('judge path: "3. Start the call" shows replies; without Gemini Nano the first is the prepared answer', jo.cards.length === 3 && /signed except the penalty clause/.test(jo.cards[0]) && /From your briefing/.test(jo.cards[0]), jo.cards[0]);
+  await j.keyboard.press('1'); ok('judge path: "1" selects the first reply', (await jov()).sel === 0);
+  await j.keyboard.press('Enter'); await j.waitForTimeout(300);
+  ok('judge path: Enter posts it in the call chat', ((await jchat()).at(-1) || '').includes('signed except the penalty clause'), (await jchat()).at(-1));
+  await j.getByRole('button', { name: 'Next line' }).click(); await j.waitForTimeout(3000);
+  await j.keyboard.press('Alt+1'); await j.waitForTimeout(300);
+  ok('judge path: after "Next line", Alt+1 holds the floor', ((await jchat()).at(-1) || '').includes("I'm still speaking"), (await jchat()).at(-1));
+  await j.keyboard.press('4'); await j.waitForTimeout(300);
+  ok('judge path: "4" says "I answered myself"', ((await jchat()).at(-1) || '').includes('answered out loud') && /Got it/.test((await jov()).notice), (await jchat()).at(-1));
+  ok('judge path: "Try with the cloud" is there for generated replies', await j.getByRole('button', { name: 'Try with the cloud', exact: true }).isVisible());
+  await j.close();
+}
 console.log(R.join('\n')); console.log('ERRORS:', errs.join('\n') || 'none');
+// A failed check or an unexpected error makes the script fail (CI, pre-commit).
+if (R.some((l) => l.startsWith('FAIL')) || errs.length) process.exitCode = 1;
 await browser.close(); srv.close();

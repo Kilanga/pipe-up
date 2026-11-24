@@ -25,7 +25,9 @@ function wait(ms, signal) {
 /**
  * A model factory to pass as `createModel`. `world` describes the computer:
  *   nano: true when Gemini Nano is there; cloudFails: the cloud request fails;
- *   answer(call): the text to return; delay: ms before the answer.
+ *   answer(call): the text to return; delay: ms before the answer;
+ *   fail(call): the model throws; timeout(call): the SDK's own timeout;
+ *   hang(call): a stuck model that never answers, even when cancelled.
  * Every call is recorded in world.calls with the route it really took and
  * where its cancel signal was found.
  */
@@ -65,6 +67,8 @@ export function fakeModels(world) {
       world.maxRunning = Math.max(world.maxRunning, world.running);
       try {
         if (world.fail?.(rec)) throw new Error('model error');
+        if (world.timeout?.(rec)) throw new DOMException('Timeout has expired', 'AbortError');
+        if (world.hang?.(rec)) await new Promise(() => {});
         await wait(world.delay ?? 5, signal);
       } catch (e) {
         rec.aborted = e.name === 'AbortError';
@@ -110,7 +114,7 @@ export function fakeEngine({ world = {}, settings = {}, remote = {}, briefing = 
     createModel: fakeModels(world),
     getDeviceStatus: async () => {
       world.statusCalls++;
-      return world.nano ? 'available' : 'unavailable';
+      return world.status?.() ?? (world.nano ? 'available' : 'unavailable');
     },
   });
   return { engine, world, state };

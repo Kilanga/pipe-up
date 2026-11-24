@@ -143,8 +143,7 @@ copy of his voice.
 
 32
 00:02:12,922 --> 00:02:16,342
-[Synthetic voice] REPLACE WITH THE EXACT
-WORDS SPOKEN
+[Synthetic voice reads the reply]
 
 33
 00:02:16,422 --> 00:02:19,920

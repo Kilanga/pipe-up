@@ -162,6 +162,65 @@ test('warm-up uses the device only and does not leave a stale cancel signal', as
   assert.equal(world.calls.at(-1).mode, InferenceMode.ONLY_ON_DEVICE);
 });
 
+test('warm-up gives way to a real question', async () => {
+  const { engine, world } = fakeEngine({ world: { delay: 300 } });
+  const warm = engine.warmUp();
+  await tick(20);
+  world.delay = 20;
+  const t0 = Date.now();
+  const res = await engine.suggest(LINES);
+  await warm;
+  assert.equal(res.route, 'on_device');
+  assert.ok(Date.now() - t0 < 200, 'the question did not wait for the warm-up to finish');
+  assert.equal(world.calls[0].aborted, true, 'the warm-up was cancelled');
+  assert.equal(world.maxRunning, 1);
+  assert.equal(engine.deviceReady, true, 'a cancelled warm-up is not a model failure');
+});
+
+test('a stuck Gemini Nano call: releaseDevice() lets the next questions through', async () => {
+  const { engine, world } = fakeEngine({ world: { hang: () => true } });
+  const ctl = new AbortController();
+  const stuck = engine.suggest(LINES, { signal: ctl.signal });
+  await tick(20);
+  ctl.abort(); // the runner's timeout
+  assert.equal((await stuck).cancelled, true, 'the caller hears of the cancellation at once');
+  world.hang = null;
+  // Without the release, the next question waits behind the stuck call.
+  const waiting = engine.suggest(LINES);
+  assert.equal(await Promise.race([waiting, tick(60).then(() => 'still waiting')]), 'still waiting');
+  engine.releaseDevice();
+  const res = await engine.suggest(LINES);
+  assert.equal(res.route, 'on_device');
+  assert.equal(world.statusCalls, 2, 'Chrome is asked again whether the model is usable');
+});
+
+test('the SDK timeout is a failure, not a cancellation', async () => {
+  // In the cloud: basic replies, said as a timeout.
+  const a = fakeEngine({ world: { nano: false, timeout: () => true }, settings: { cloudConsent: true } });
+  const res = await a.engine.suggest(LINES);
+  assert.equal(res.cancelled, undefined);
+  assert.equal(res.route, 'fallback');
+  assert.match(res.reason, /the cloud gave no answer in time/);
+  assert.equal(res.cloudProblem, 'error');
+  // On the device: the cloud takes over after consent.
+  const b = fakeEngine({ world: { timeout: (rec) => rec.mode === InferenceMode.ONLY_ON_DEVICE }, settings: { cloudConsent: true } });
+  const res2 = await b.engine.suggest(LINES);
+  assert.equal(res2.route, 'in_cloud');
+  assert.match(res2.reason, /Gemini Nano gave no answer in time/);
+});
+
+test('PREFER_ON_DEVICE that fails on the device is not called a cloud error', async () => {
+  // Chrome first says "downloadable", then the model is there: the SDK runs it on the device.
+  let asked = 0;
+  const { engine, world } = fakeEngine({ world: { status: () => (asked++ ? 'available' : 'downloadable'), fail: () => true }, settings: { cloudConsent: true } });
+  const res = await engine.suggest(LINES);
+  assert.equal(world.calls[0].mode, InferenceMode.PREFER_ON_DEVICE);
+  assert.equal(res.route, 'fallback');
+  assert.match(res.reason, /Gemini Nano error on this computer/);
+  assert.doesNotMatch(res.reason, /cloud error/);
+  assert.equal(res.cloudProblem, undefined);
+});
+
 test('no unhandled rejections from cancelled requests', async () => {
   await tick(20);
   assert.deepEqual(unhandled, []);

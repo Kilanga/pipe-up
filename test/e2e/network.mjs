@@ -138,7 +138,7 @@ async function open(world, { nano = false } = {}) {
   await v.say('Is the penalty clause of the vendor contract signed?');
   let o = await v.ov();
   ok('first cloud need: reCAPTCHA loaded, one limited-use token exchanged, sent with the request', v.recaptcha().length === 1 && v.exchanges().length === 1 && /"limited_use":true/.test(v.exchanges()[0].body) && v.cloud().length === 1 && v.cloud()[0].appCheck === 'fake-app-check-token', `${v.recaptcha().length} script, ${v.exchanges().length} exchange, ${v.cloud().length} request`);
-  ok('cloud reply shown, tagged only where it overlaps the briefing', o.badge === 'Cloud' && /Signed, except the penalty clause\.From your briefing/.test(o.cards[0]) && /General reply/.test(o.cards[1]), o.cards[0]);
+  ok('cloud reply shown, tagged only where it overlaps the briefing', o.badge === 'Cloud' && /Signed, except the penalty clause\.From your briefing/.test(o.cards[0]) && !/From your briefing/.test(o.cards[1]), o.cards[0]);
   let p = v.prompts().at(-1) || '';
   const talk = p.slice(p.indexOf('CONVERSATION')); // (the sample briefing itself mentions Maya)
   ok('cloud prompt: neutral speaker labels, no display name', /Speaker A: <<<[^\n]*\nSpeaker A: <<<Is the penalty/.test(talk) && !/Maya|Jordan/.test(talk), talk.split('\n').slice(1, 3).join(' / ').slice(0, 120));
@@ -199,13 +199,13 @@ async function open(world, { nano = false } = {}) {
   await v.page.click('#try-cloud'); await v.page.waitForTimeout(300);
   await v.say('Is the vendor contract signed?', 4500);
   let o = await v.ov();
-  ok('cloud refused: basic replies and a clear, calm message in the call panel', o.cards.length === 3 && o.badge === 'Basic replies' && /The cloud did not accept this request .* these are basic replies\. On-device suggestions are not affected\. Please try again later\./.test(o.notice), o.notice);
+  ok('cloud refused: basic replies and a clear, calm message in the call panel', o.cards.length === 3 && o.badge === 'Basic replies' && o.notice === 'The cloud could not answer this time. These are basic replies. You can still write your own.', o.notice);
   const live = await v.page.locator('#pu-pane-Live .cloud-note').innerText();
-  ok('cloud refused: the Live tab keeps the message', /basic replies\. On-device suggestions are not affected/.test(live), live);
+  ok('cloud refused: the Live tab keeps the message', /^The cloud could not answer this time\. These are basic replies\./.test(live), live);
   ok('cloud refused: no request reached the Gemini API without a token', v.cloud().length === 0 && v.exchanges().length === 1);
   await v.say('And the March deadline?', 4500);
   o = await v.ov();
-  ok('cloud refused again: the SDK backs off (no second exchange) and the message says to try later', v.exchanges().length === 1 && /try again later/.test(o.notice) && o.cards.length === 3, `${v.exchanges().length} exchange(s) | ${o.notice}`);
+  ok('cloud refused again: the SDK backs off (no second exchange) and the same calm message is shown', v.exchanges().length === 1 && /The cloud could not answer this time/.test(o.notice) && o.cards.length === 3, `${v.exchanges().length} exchange(s) | ${o.notice}`);
   await v.ctx.close();
 }
 
@@ -223,4 +223,6 @@ async function open(world, { nano = false } = {}) {
 }
 
 console.log(R.join('\n')); console.log('ERRORS:', errs.join('\n') || 'none');
+// A failed check or an unexpected error makes the script fail (CI, pre-commit).
+if (R.some((l) => l.startsWith('FAIL')) || errs.length) process.exitCode = 1;
 await browser.close(); srv.close();

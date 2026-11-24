@@ -55,15 +55,15 @@ const meet = await ctx.newPage(); meet.on('pageerror', e => errs.push('meet ' + 
 const iso = await isolatedWorld(meet);
 await meet.goto('https://meet.google.com/abc-defg-hij'); await meet.bringToFront(); await meet.waitForTimeout(2500);
 ok('voice flag off', (await meet.evaluate(() => document.documentElement.dataset.pipeUpVoice)) === 'off');
-const ov = () => iso(`(r) => ({ cards: r.querySelectorAll('.card').length, sel: [...r.querySelectorAll('.card')].findIndex((c) => c.classList.contains('sel')), badge: r.querySelector('.badge').textContent, cls: r.querySelector('.pu').className, notice: r.querySelector('.notice')?.textContent, typed: r.querySelector('input[type=text]').value })`);
+const ov = () => iso(`(r) => ({ cards: r.querySelectorAll('.card').length, sel: [...r.querySelectorAll('.card')].findIndex((c) => c.classList.contains('sel')), badge: r.querySelector('.badge').textContent, cls: r.querySelector('.pu').className, notice: r.querySelector('.notice')?.textContent, typed: r.querySelector('.typed').value })`);
 const qa = () => meet.evaluate(() => [...document.querySelectorAll('#qamsgs li')].map(l => l.textContent));
 const msgs = () => meet.evaluate(() => [...document.querySelectorAll('#msgs li')].map(l => l.textContent));
 await meet.evaluate(() => say('Maya', 'Can you give us an update on the contract?')); await meet.waitForTimeout(3500);
 ok('3 cards from captions', (await ov()).cards === 3);
-// ---- A script of the Meet page (another extension, an XSS) cannot read or drive the panel ----
+// ---- A script of the Meet page (another extension, an XSS): the panel's DOM is closed to it, and its synthetic keys and clicks are ignored ----
 await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); await chrome.storage.local.set({ settings: { ...settings, disclosure: 'I stutter (private line).' } }); }); await meet.waitForTimeout(400);
 const pageView = await meet.evaluate(() => { const h = document.getElementById('pipe-up-overlay'); return { root: h.shadowRoot === null, text: h.textContent + h.innerHTML, deep: document.documentElement.innerText.includes('private line') }; });
-ok('page script: the panel is closed to it (no suggestions, no "tell others" line)', pageView.root && pageView.text === '' && !pageView.deep, JSON.stringify(pageView));
+ok('page script: the panel\'s DOM is closed to it (no suggestions, no "tell others" line)', pageView.root && pageView.text === '' && !pageView.deep, JSON.stringify(pageView));
 // synthetic keys, sent the way the audit did: on window, document, body and the panel's host
 const fakeKey = (init) => meet.evaluate((init) => { for (const t of [window, document, document.body, document.getElementById('pipe-up-overlay')]) for (const type of ['keydown', 'keypress', 'keyup']) t.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, composed: true, ...init })); }, init);
 await fakeKey({ key: 'd', code: 'KeyD', altKey: true }); await fakeKey({ key: '1', code: 'Digit1', altKey: true }); await meet.waitForTimeout(1200);
@@ -152,7 +152,7 @@ await meet.bringToFront(); await meet.waitForTimeout(1500);
 await meet.evaluate(() => say('Maya', 'Is the budget approved?')); await meet.waitForTimeout(4500);
 const refused = await ov();
 ok('debug token + consent: the cloud request asks App Check for a token then, and only then', checks.length >= 1 && checks.every((h) => /firebaseappcheck/.test(h)), checks.join(', '));
-ok('cloud not reachable: basic replies and a calm message in the call panel', refused.cards === 1 && /basic replies\. On-device suggestions are not affected/.test(refused.notice), refused.notice);
+ok('cloud not reachable: basic replies and a calm message in the call panel', refused.cards === 1 && /^The cloud could not (answer this time|be reached)\. These are basic replies\. You can still write your own\.$/.test(refused.notice), refused.notice);
 await ctx.close();
 
 // ---- On-device path in the extension, with a stand-in for Gemini Nano (fake-nano.mjs) ----
@@ -215,7 +215,9 @@ await panel2.getByRole('button', { name: 'Save settings' }).click(); await meet2
 const before = (await nano()).prompts.length;
 await meet2.evaluate(() => say('Maya', 'Anything else before we close?')); await meet2.waitForTimeout(1800);
 ok('on-demand mode: no early start', (await nano()).prompts.length === before, String((await nano()).prompts.length - before));
-const plog = await panel2.evaluate(() => { document.getElementById('pu-tab-Live').click(); return document.querySelector('.log').innerText; });
+const plog = await panel2.evaluate(() => { document.getElementById('pu-tab-Live').click(); return document.querySelector('.log').textContent; });
 ok('side panel log tells the early start', /started \d+ ms before the pause/.test(plog), plog.split('\n')[0]);
 console.log(R.join('\n')); console.log('ERRORS:', errs.join('\n') || 'none');
+// A failed check or an unexpected error makes the script fail (CI, pre-commit).
+if (R.some((l) => l.startsWith('FAIL')) || errs.length) process.exitCode = 1;
 await ctx2.close();

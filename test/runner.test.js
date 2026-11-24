@@ -153,6 +153,18 @@ test('timeout: the request is aborted and basic replies are shown', async () => 
   assert.equal(shown.results.at(-1).route, 'on_device');
 });
 
+test('a stuck Gemini Nano call blocks one question only: the next one is answered', async () => {
+  const { runner, shown, world } = await setup({ timeoutMs: 60 });
+  world.hang = () => true;
+  runner.request({ id: 1, lines: Q1 });
+  await tick(120); // timed out: basic replies
+  assert.deepEqual(shown.results.map((r) => [r.id, r.route]), [[1, 'fallback']]);
+  world.hang = null; // the model works again, the first call never ended
+  runner.request({ id: 2, lines: Q2 });
+  await tick(50);
+  assert.deepEqual(shown.results.map((r) => [r.id, r.route]), [[1, 'fallback'], [2, 'on_device']]);
+});
+
 test('abort(): nothing is shown after the call tab went away', async () => {
   const { runner, shown, world } = await setup({ world: { delay: 60 } });
   runner.request({ id: 1, lines: Q1 });
@@ -176,7 +188,8 @@ test('an engine that cannot start gives basic replies, not a crash', async () =>
   await tick(10);
   console.warn = warn;
   assert.equal(shown[0].route, 'fallback');
-  assert.match(shown[0].reason, /Firebase could not start/);
+  assert.match(shown[0].error, /Firebase could not start/);
+  assert.doesNotMatch(shown[0].reason, /Firebase/, 'the raw error is not in the text shown');
 });
 
 test('pause timer: early at the short silence, pause at the long one, restart on change', (t) => {

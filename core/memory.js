@@ -18,11 +18,16 @@ export const ACTIONS = {
   DISMISSED: 'dismissed', // Esc on all suggestions
 };
 
-export const LIMITS = { maxEvents: 500, retentionDays: 90, contextChars: 300, keyWords: 20 };
+export const LIMITS = { maxEvents: 500, retentionDays: 90, contextChars: 300, keyWords: 20, keyWordChars: 24 };
+
+// A key word is a word: bounded, and not a number. A token that is mostly
+// digits (a phone or account number, an amount) is not kept.
+const isKeyWord = (w) => typeof w === 'string' && w.length > 0 && (w.match(/\d/g) || []).length * 2 <= w.length;
+const cleanKeys = (words) => [...new Set(words.filter(isKeyWord).map((w) => w.slice(0, LIMITS.keyWordChars)))].slice(0, LIMITS.keyWords);
 
 /** The key words kept from the line being answered: no sentence, no order of speech beyond these words. */
 export function keyWords(context) {
-  return [...new Set(tokenize(String(context || '').slice(0, LIMITS.contextChars)))].slice(0, LIMITS.keyWords);
+  return cleanKeys(tokenize(String(context || '').slice(0, LIMITS.contextChars)));
 }
 
 export function makeEvent({ context, action, reply = '', shown = [], choice = null, now = Date.now() }) {
@@ -39,11 +44,13 @@ export function makeEvent({ context, action, reply = '', shown = [], choice = nu
 
 /**
  * Entries saved by versions up to 0.3.1 held the sentence being answered.
- * It is replaced by its key words; returns true when the entry changed.
+ * It is replaced by its key words. Key words stored before 0.4.0 are brought
+ * to today's rules (bounded, no numbers). Returns true when the entry changed.
  */
 export function migrateEvent(e) {
-  if (Array.isArray(e.keys) && !('context' in e)) return false;
-  e.keys = Array.isArray(e.keys) ? e.keys : keyWords(e.context);
+  const keys = Array.isArray(e.keys) ? cleanKeys(e.keys) : keyWords(e.context);
+  if (Array.isArray(e.keys) && !('context' in e) && keys.length === e.keys.length && keys.every((k, i) => k === e.keys[i])) return false;
+  e.keys = keys;
   delete e.context;
   return true;
 }

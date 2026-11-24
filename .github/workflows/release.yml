@@ -58,9 +58,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release
+          # The source archive of the GPL-3.0 phonemizer is uploaded only if
+          # the build could make it (scripts/build.mjs).
           path: |
             dist/pipe-up-extension.zip
             dist/notes.md
+            dist/espeak-ng-source.tar.gz
           if-no-files-found: error
 
   # The only job that can write to the repository. It runs no code from the
@@ -84,8 +87,10 @@ jobs:
           V: ${{ needs.build.outputs.version }}
           SHA: ${{ github.sha }}
         run: |
+          FILES="pipe-up-extension.zip"
+          if [ -f espeak-ng-source.tar.gz ]; then FILES="$FILES espeak-ng-source.tar.gz"; fi
           if [ "$EVENT" = "release" ]; then
-            gh release upload "$TAG" pipe-up-extension.zip --clobber
+            gh release upload "$TAG" $FILES --clobber
           else
-            gh release create "v$V" pipe-up-extension.zip --target "$SHA" --title "Pipe Up $V" --notes-file notes.md --latest
+            gh release create "v$V" $FILES --target "$SHA" --title "Pipe Up $V" --notes-file notes.md --latest
           fi

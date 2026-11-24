@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isSelf, setMyName, recentLines } from '../extension/src/meet-captions.js';
-import { migrateSettings, DEFAULT_SETTINGS } from '../core/config.js';
+import { readFileSync } from 'node:fs';
+import { migrateSettings, voiceOutputWithoutVoice, DEFAULT_SETTINGS, CLOUD_PROBLEM_TEXT } from '../core/config.js';
 import { findHandButton, raiseHand } from '../extension/src/meet-hand.js';
 
 // A minimal stand-in for Meet's toolbar: buttons with attributes and a click counter.
@@ -96,4 +97,36 @@ test('raise hand: fails silently and never clicks another button', () => {
 test('raise hand is off by default', () => {
   assert.equal(DEFAULT_SETTINGS.raiseHandOnHold, false);
   assert.equal(migrateSettings({ outputMode: 'chat' }).raiseHandOnHold, false);
+});
+
+test('update from 0.3.1: a voice output without any voice on the computer goes back to chat', () => {
+  assert.equal(voiceOutputWithoutVoice({ outputMode: 'chat+voice' }, []), true);
+  assert.equal(voiceOutputWithoutVoice({ outputMode: 'voice' }, []), true);
+  assert.equal(voiceOutputWithoutVoice({ outputMode: 'chat' }, []), false);
+  assert.equal(voiceOutputWithoutVoice({}, []), false);
+  assert.equal(voiceOutputWithoutVoice({ outputMode: 'voice' }, ['en_US-john-medium']), false, 'a downloaded voice: the choice is kept');
+});
+
+test('manifest: version of the package, description within the store limit', () => {
+  const read = (f) => JSON.parse(readFileSync(new URL('../' + f, import.meta.url), 'utf8'));
+  const manifest = read('extension/manifest.json');
+  const lock = read('package-lock.json');
+  assert.equal(manifest.version, read('package.json').version);
+  assert.equal(lock.version, manifest.version);
+  assert.equal(lock.packages[''].version, manifest.version);
+  assert.ok(manifest.description.length <= 132, String(manifest.description.length));
+  assert.match(manifest.description, /on your device by default\.$/);
+});
+
+test('cloud problems are told in calm words, the same shape for each kind', () => {
+  for (const text of Object.values(CLOUD_PROBLEM_TEXT)) {
+    assert.match(text, /^The cloud .+\. These are basic replies\. You can still write your own\.$/);
+    assert.doesNotMatch(text, /safety|check failed|error/i);
+  }
+});
+
+test('release notes of this version exist and hold nothing provisional', () => {
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  const notes = readFileSync(new URL(`../docs/releases/${version}.md`, import.meta.url), 'utf8');
+  assert.doesNotMatch(notes, /TO CONFIRM|TODO|TBD|PLANNED|XXX|\?\?\?/);
 });

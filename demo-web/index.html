@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pipe Up — live demo</title>
-    <meta name="description" content="Try Pipe Up on a simulated video call: reply suggestions from live captions, on-device AI first, with Firebase AI Logic hybrid inference." />
+    <meta name="description" content="Try Pipe Up, a backup channel for people who stutter, on a simulated video call. On device first, with Firebase AI Logic hybrid inference." />
     <link rel="icon" href="icon.svg" />
     <link rel="stylesheet" href="panel.css" />
     <link rel="stylesheet" href="demo.css" />
@@ -32,17 +32,20 @@
         <div class="callbar">
           <button id="sample">1. Load Sam's sample briefing</button>
           <button id="prep">2. Prepare the answers</button>
-          <button class="primary" id="next">Start the call</button>
+          <button class="primary" id="next">3. Start the call</button>
           <button id="auto" aria-pressed="false">Auto-play</button>
           <form id="say" class="say">
             <input type="text" id="sayText" placeholder="Or type what someone says…" aria-label="Line spoken by another participant" />
             <button type="submit">Say</button>
           </form>
         </div>
-        <p class="muted small">Cloud before the call, device during the call: "Prepare the answers" lets a cloud model read Sam's fictional briefing once, after you confirm. The answers it prepares are then used on this computer while the call runs.</p>
         <p class="muted small" id="share-note" role="status" hidden></p>
-        <p class="muted small">Demo voice: a speech voice installed on this computer (never an online voice); with none, the reply goes to the chat. The extension uses a local Piper voice mixed into your Meet microphone.</p>
-        <p class="muted small">What this page contacts: when it opens, Firebase Remote Config and Firebase Installations (which gives this browser a random ID), to read its settings. Google reCAPTCHA (a cookie) and the Gemini API only when a cloud request is made, after you allow it. Your briefing, history and settings are stored in this browser.</p>
+        <details class="about">
+          <summary>About this demo</summary>
+          <p class="muted small">Cloud before the call, device during the call: "Prepare the answers" lets a cloud model read Sam's fictional briefing once, after you confirm. The answers it prepares are then used on this computer while the call runs.</p>
+          <p class="muted small">Demo voice: a speech voice installed on this computer (never an online voice); with none, the reply goes to the chat. The extension uses a local Piper voice mixed into your Meet microphone.</p>
+          <p class="muted small">What this page contacts: when it opens, Firebase Remote Config and Firebase Installations (which gives this browser a random ID), to read its settings. Google reCAPTCHA (a cookie) and the Gemini API only when a cloud request is made, after you allow it. Your briefing, history and settings are stored in this browser.</p>
+        </details>
         <section class="chat" aria-label="Call chat">
           <h2>Call chat</h2>
           <ol id="chat"></ol>
