@@ -4,6 +4,8 @@ import { build } from 'esbuild';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { trimPhonemizerData } from './phonemizer-data.mjs';
+import { voiceFiles } from './voice-files.mjs';
+import { VOICES, voiceUrl } from '../extension/src/voices.js';
 
 const root = new URL('..', import.meta.url).pathname;
 const p = (s) => root + s;
@@ -45,6 +47,11 @@ const trimPhonemizer = {
   },
 };
 
+// The included voice: downloaded once and checked (scripts/voice-files.mjs).
+// Done first, so that a build without it stops before anything is replaced.
+const includedVoices = [];
+for (const v of VOICES.filter((v) => v.included)) includedVoices.push(...(await voiceFiles(v, voiceUrl(v.id), p('.cache/voices/'))));
+
 rmSync(p('dist'), { recursive: true, force: true });
 
 // Extension
@@ -74,6 +81,8 @@ if (!phonemizer || builtSize !== phonemizer.data.length) {
   );
 }
 writeFileSync(voice + 'piper_phonemize.data', phonemizer.data);
+mkdirSync(voice + 'models');
+for (const f of includedVoices) writeFileSync(voice + 'models/' + f.name, f.bytes);
 cpSync(p('third_party'), voice + 'licenses', { recursive: true });
 // How the GPL-3.0 phonemizer was built, as told by the package it comes from.
 cpSync(p('node_modules/@diffusionstudio/piper-wasm/README.md'), voice + 'licenses/piper-wasm-BUILD.md');
